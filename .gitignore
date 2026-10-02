@@ -7,3 +7,6 @@ __pycache__/
 *.key
 *credentials*.json
 service-account*.json
+
+# 主催者配布スキル（ライセンス記載なし・再配布しない）
+.claude/skills/gc-hackathon-vol5/
