@@ -1,0 +1,9 @@
+# テスト用（本番イメージには入れない）。本番の依存は requirements.txt。
+-r requirements.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+# tests/test_safefetch_tls.py: ループバックの TLS サーバー用の自己署名証明書を作る
+cryptography==50.0.2
+# tests/test_safefetch_adversarial.py B7: ホストの畳み込みをブラウザ相当（UTS 46）の物差しと突き合わせる。
+# 無いと importorskip で黙ってスキップされ、検知が静かに止まる（tests/test_repo_hygiene.py が在ることを確かめる）
+idna==3.20

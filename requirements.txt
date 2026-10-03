@@ -1,3 +1,10 @@
 fastapi==0.142.2
 uvicorn==0.54.0
 google-genai==2.27.0
+pydantic==2.13.5
+# app/net（SafeFetch）が直接 import する HTTP 層。google-genai 経由の推移依存に任せない:
+# 受信量・ヘッダの上限と接続のピン留めが httpcore / h11 の挙動に依存するため、版が動くと安全性の前提が変わる。
+httpcore==1.0.9
+h11==0.16.0
+anyio==4.15.1
+certifi==2026.7.22

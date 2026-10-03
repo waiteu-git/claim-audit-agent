@@ -16,3 +16,16 @@ Cloud Run 上の最小サービス（`/health`・`/probe`）が Vertex AI の Ge
 gcloud run services update claim-audit-agent --project=<PROJECT> --region=asia-northeast1 --update-env-vars=KILL_SWITCH=1
 gcloud run services update claim-audit-agent --project=<PROJECT> --region=asia-northeast1 --remove-env-vars=KILL_SWITCH
 ```
+
+## 開発
+
+- 配置・依存の向きは `app/__init__.py` の docstring が正典（共有の型は `app/contracts.py`、設定と環境変数は `app/config.py`）。
+- テスト（完全オフライン。外向き通信は `tests/conftest.py` が遮断する）: `pip install -r requirements-dev.txt && python -m pytest`
+  - 単体・敵対（モジュールごと）に加えて、`tests/test_integration_*.py`（実モジュールを通しでつなぐ・別実装の食い違い）と
+    `tests/test_repo_hygiene.py`（依存の固定・本番イメージの中身・import の向き・S1 が無傷）がある。
+  - `xfail` が4件ある（`tests/test_sanitize_adversarial.py` の既知の残り＝HTML 解析の近似の限界。ブラウザでは隠れる文字が可視に残る最小再現）。
+- 依存は版を固定する。本番は `requirements.txt`、テスト専用（pytest・cryptography・idna）は `requirements-dev.txt`。
+  本番イメージ（Dockerfile）は `requirements.txt` と `app/` だけを入れる。
+- デプロイは 3.13（Dockerfile）。ローカルが 3.14 でも通るだけでは足りないので、`tests/test_py313_safety.py` が注釈の遅延評価依存などを検査する。
+- `deploy.sh` は既定で表示だけ（`--apply` で初めて gcloud を呼ぶ）。allUsers は付けない。
+- Vertex の実測（手動・最大8回）: `GOOGLE_CLOUD_PROJECT=<id> python -m ops.measure_gemini --yes`。結果は `app/model/gemini.py` の docstring へ書き戻す。

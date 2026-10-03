@@ -1,4 +1,5 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
 .env
@@ -7,6 +8,22 @@ __pycache__/
 *.key
 *credentials*.json
 service-account*.json
+storageState*.json
 
 # 主催者配布スキル（ライセンス記載なし・再配布しない）
 .claude/skills/gc-hackathon-vol5/
+.claude/settings.local.json
+
+# テスト・評価の副産物
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+*.tmp
+*.log
+tests/cassettes/local/
+
+# macOS
+.DS_Store
