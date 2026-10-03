@@ -17,6 +17,14 @@ gcloud run services update claim-audit-agent --project=<PROJECT> --region=asia-n
 gcloud run services update claim-audit-agent --project=<PROJECT> --region=asia-northeast1 --remove-env-vars=KILL_SWITCH
 ```
 
+## 第2弾 G2（Reader → 検査 → 判定 → 出力の縦1本。オフラインでテスト可能な範囲）
+
+- `app/agent/`: `reader`（ツール無し・構造化出力・引用の再検証）／`governor`・`budget`・`tools`・`trace`（上限・許可リスト・重複検知・停止条件・JSONL）／
+  `planner`（手動 function calling の Planner ループと、LLM 無しの決定論 `router`）／`acquire`・`run`・`report`。
+- ローカル実行: `python -m app.cli <preset> [--inspect-mode planner|router] [--format json|html] [--out PATH] [--trace PATH]`
+  （プリセット ID だけを受ける。取得は SafeFetch、モデルは Vertex の Gemini＝`GOOGLE_CLOUD_PROJECT` が要る。テストはフェイクを注入）。
+- 判定（Verdict）を書けるのは `app/adjudicate.py` だけ。`tests/test_agent_run.py` が AST で固定する。
+
 ## 開発
 
 - 配置・依存の向きは `app/__init__.py` の docstring が正典（共有の型は `app/contracts.py`、設定と環境変数は `app/config.py`）。

@@ -14,7 +14,8 @@
   checks/               http_probe・auth_wall・text_length・cloud_run_signature・html_signals・class_screen・registry
                         （leak_scan・contains_terms・autorun は差し込み口だけ＝G3）
   adjudicate.py         判定表（要件×観測 → Verdict。判定を書けるのはこのコードだけ）
-  agent/                次: reader・planner・governor・budget・tools・trace
+  agent/                reader・planner（Planner ループと router）・governor・budget・tools・trace・state・acquire・run・report（第2弾 G2）
+  cli.py                ローカル CLI（`python -m app.cli <preset>`）。agent と同じく他から import されない
   quota.py              次: 予約→精算・審査員コード・匿名枠
   egress_guard.py       次: ASGI の全パス共通上限
   main.py               S1 の疎通確認サービス（既存。S2/S3 の入口は後工程）
@@ -28,7 +29,7 @@ import の向き（上が下へ依存してよい。逆向き・循環は tests/
   ingest                       net.urlcheck（リンク表のスコープ判定を取得時の検査と同じ定義にするため）・textsafe
   checks                       ingest.sanitize.decode_body（本文の文字コードの読みを1つにするため）・config・errors
   adjudicate                   checks
-  agent / main                 他から import されない（agent は上のすべてを使ってよい）
+  agent / cli / main           他から import されない（agent・cli は上のすべてを使ってよい）
 
 「同じ事実を2か所で判定しない」: 文字コードは ingest.sanitize.decode_body、スコープ照合は contracts.UrlPrefix.matches と
 net.urlcheck.validate_url が唯一の定義（tests/test_integration_consistency.py が割れないことを固定する）。

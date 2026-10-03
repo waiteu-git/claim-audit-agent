@@ -172,7 +172,8 @@ ALLOWED_EDGES: dict[str, set[str]] = {
     "adjudicate": {"checks", "contracts"},
     "main": set(),  # S1 は他の app モジュールに依存しない
 }
-TOP_LEVEL_ONLY = {"agent", "main"}  # 他の単位から import されない
+TOP_LEVEL_ONLY = {"agent", "cli", "main"}  # 他の単位から import されない
+COMPOSERS: dict[str, set[str]] = {"cli": {"agent"}}  # 例外: 入口（python -m app.cli）は、組み立て済みの agent を呼ぶ
 
 
 def test_app_modules_import_in_one_direction_only():
@@ -185,7 +186,8 @@ def test_app_modules_import_in_one_direction_only():
 def test_nothing_imports_the_top_level_only_units():
     edges = _app_edges()
     for unit, deps in edges.items():
-        assert not (deps & TOP_LEVEL_ONLY), f"app.{unit} が {sorted(deps & TOP_LEVEL_ONLY)} を import している"
+        bad = (deps & TOP_LEVEL_ONLY) - COMPOSERS.get(unit, set())
+        assert not bad, f"app.{unit} が {sorted(bad)} を import している"
 
 
 def test_ingest_uses_the_net_package_only_for_the_pure_url_check():
