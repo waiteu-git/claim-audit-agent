@@ -1836,7 +1836,7 @@ def parse_tool_call(name: str, args: Mapping[str, Any]) -> ToolCall:
 def llm_json_schema(model: type[BaseModel]) -> dict[str, Any]:
     """pydantic モデル → モデルへ渡す JSON Schema。
 
-    $ref を展開し、title / default / additionalProperties / description を除く。
+    $ref を展開し、title / default / additionalProperties / description / maxItems を除く。
     description を除くのは、クラスの docstring（設計メモ）がそのままモデルへ渡るのを防ぐため。
     """
     schema = model.model_json_schema()
@@ -1851,8 +1851,8 @@ def llm_json_schema(model: type[BaseModel]) -> dict[str, Any]:
             return walk(defs[node["$ref"].rsplit("/", 1)[-1]])
         out: dict[str, Any] = {}
         for k, v in node.items():
-            if k in ("title", "default", "additionalProperties", "description"):
-                continue
+            if k in ("title", "default", "additionalProperties", "description", "maxItems"):
+                continue  # maxItems: Vertex(gemini-3.7-flash)が400で拒否する（2026-10-06実測）。上限は受信後の pydantic 検証が守る
             if k == "properties":  # プロパティ名は絞り込まない
                 out[k] = {pk: walk(pv) for pk, pv in v.items()}
             else:
