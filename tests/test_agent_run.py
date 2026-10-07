@@ -365,3 +365,14 @@ def test_no_secret_shaped_or_real_identifier_in_the_new_code():
     for p in AGENT_FILES + sorted(Path("tests").glob("*agent*.py")) + [Path("tests/test_cli.py")]:
         if p.exists():
             assert not pat.search(p.read_text(encoding="utf-8")), p
+
+
+def test_record_carries_degraded_reason_only_when_degraded():
+    # 回帰（10/7 のライブ実行）: 劣化→壁時計切れの順で ABORTED になると、Governor に残った劣化理由が
+    # RunRecord の検証に落ち、実行記録が1件も残らなかった。記録へは DEGRADED の時だけ載せる。
+    from app.agent.run import record_degraded_reason
+    from app.contracts import DegradedReason, RunStatus
+
+    assert record_degraded_reason(RunStatus.ABORTED, DegradedReason.DENIAL_STREAK) is None
+    assert record_degraded_reason(RunStatus.DEGRADED, DegradedReason.BUDGET) is DegradedReason.BUDGET
+    assert record_degraded_reason(RunStatus.DONE, None) is None

@@ -66,6 +66,12 @@ class RunResult:
     events: tuple[TraceEvent, ...] = field(default=())
 
 
+def record_degraded_reason(status: RunStatus, reason: DegradedReason | None) -> DegradedReason | None:
+    """実行記録に載せる劣化理由。Governor は DEGRADED の後に ABORTED になっても最初の理由を残す（トレース用）が、
+    RunRecord は DEGRADED の時だけ理由を許す。10/7 のライブ実行で、劣化→壁時計切れの順に起きて記録が作れず結果が消えた。"""
+    return reason if status is RunStatus.DEGRADED else None
+
+
 async def run_audit(
     preset: Preset,
     *,
@@ -101,7 +107,7 @@ async def run_audit(
             env=settings.env,
             mode=RunMode.LIVE,
             status=gov.status,
-            degraded_reason=gov.degraded_reason,
+            degraded_reason=record_degraded_reason(gov.status, gov.degraded_reason),
             aborted_reason=gov.aborted_reason,
             preset_id=preset.preset_id,
             prompt_version=settings.prompt_version,
