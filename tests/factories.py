@@ -173,7 +173,7 @@ def doc_meta(doc: SanitizedDoc) -> DocMeta:
 def reader_request(**kw: Any) -> ModelRequest:
     base: dict[str, Any] = dict(
         purpose=ModelPurpose.READER, system="sys", contents="文書", response_model=ReaderOutput,
-        max_output_tokens=1000, thinking_budget=1024, timeout_s=25.0,
+        max_output_tokens=1000, thinking_budget=RUN_CAPS.thinking_budget_reader, timeout_s=25.0,
     )  # fmt: skip
     base.update(kw)
     return ModelRequest(**base)
