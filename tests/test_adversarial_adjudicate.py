@@ -500,3 +500,39 @@ def test_a_quote_free_requirement_set_still_judges_without_error():
     v = run([R("R1", "len", CC.LENGTH_LIMIT)], [], [])
     assert v[0].label is L.UNVERIFIABLE
     assert len_obs("O1") and mark(U.BUDGET)  # 共用の組み立て関数が使えること（import の確認）
+
+
+# ---- 置き場が提出フォームの要件には、ページ本文の検査を当てない（10/8 の実LP自己監査で見つかった誤った不適合） ----------------
+@pytest.mark.parametrize(
+    "check_class",
+    [CC.GUIDANCE_PRESENT, CC.URL_PRESENT],
+)
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "デモ動画は自作の上、動画サイトに公開し、URLをプロジェクトにご登録ください。",  # 登録先は提出フォーム
+        "テストアカウントの認証情報は「動作確認の方法」項目にご記入ください。",  # 記入先は提出フォーム
+        "説明文はダッシュボードから入力してください。URLもあわせてお願いします。",
+        "Register the demo video URL in the project form.",
+        "Enter the test account in the dashboard.",
+    ],
+)
+def test_requirements_about_a_submission_form_are_not_checked_against_the_page_text(check_class, quote):
+    from app.checks.class_screen import quote_supports_class
+
+    assert quote_supports_class(check_class, quote) is False  # 検査できる範囲の外＝確認不能（不適合にしない）
+
+
+@pytest.mark.parametrize(
+    ("check_class", "quote"),
+    [
+        (CC.URL_PRESENT, "提出物の説明に、デモ動画のURLを記載すること。"),  # 置き場は説明（ページの本文）
+        (CC.URL_PRESENT, "The README must include a link to the demo video."),
+        (CC.GUIDANCE_PRESENT, "テストアカウントの案内を説明ページに記載すること。"),
+        (CC.GUIDANCE_PRESENT, "The page must explain how to use the demo."),
+    ],
+)
+def test_positive_control_requirements_about_the_page_itself_are_still_checked(check_class, quote):
+    from app.checks.class_screen import quote_supports_class
+
+    assert quote_supports_class(check_class, quote) is True  # 関門を締めすぎていない（本文を見るべき要件は従来どおり検査する）

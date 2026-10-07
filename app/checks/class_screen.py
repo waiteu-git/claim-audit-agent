@@ -59,6 +59,17 @@ _URL = re.compile(
     _I,
 )
 
+# 情報の置き場が、公開ページの本文ではなく、提出フォーム・ダッシュボードであることを示す語（「プロジェクトにご登録ください」
+# 「項目にご記入ください」など）。公開ページの本文を調べる検査（contains_terms）は、こういう要件には当てられない:
+# 本文に無いのは当然で、「無い」は不適合の証拠にならない（10/8 に自分のサービスを実 LP で自己監査して、動画URLの登録の要件が
+# 「本文に無い」で不適合になった）。当てずに「検査できる範囲の外」（確認不能）にする＝誤った不適合を出さない側に倒す。
+_ELSEWHERE = re.compile(
+    r"登録|記入|入力|フォーム|ダッシュボード|申し込|申込|届け出|申請|"
+    r"\bregist|\bform\b|dashboard|\benter\b|\bfill\b|\bapply\b|\bapplication\b",
+    _I,
+)
+_PAGE_TEXT_CLASSES = frozenset({CheckClass.GUIDANCE_PRESENT, CheckClass.URL_PRESENT})
+
 _VOCAB: dict[CheckClass, re.Pattern[str]] = {
     CheckClass.LENGTH_LIMIT: _LENGTH,
     CheckClass.AUTH_WALL: _AUTH,
@@ -77,7 +88,10 @@ def quote_supports_class(check_class: CheckClass, quote: str) -> bool:
     pattern = _VOCAB.get(check_class)
     if pattern is None:
         return False
-    return pattern.search(unicodedata.normalize("NFKC", quote)) is not None
+    text = unicodedata.normalize("NFKC", quote)
+    if check_class in _PAGE_TEXT_CLASSES and _ELSEWHERE.search(text) is not None:
+        return False  # 置き場が提出フォームなどで、公開ページの本文には無い（上の _ELSEWHERE の注）
+    return pattern.search(text) is not None
 
 
 def is_checkable_requirement(req: VerifiedRequirement) -> bool:
