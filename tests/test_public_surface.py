@@ -124,7 +124,10 @@ def test_a_failing_store_is_fail_closed_to_replay():
 
 
 def test_a_preset_without_a_bundled_record_says_stopped_instead_of_inventing_one():
-    status, ev = run_preset(client(make_deps(Settings(self_origin=SELF))), "lp_self")
+    # ①の記録は同梱した（10/7）。「記録の無いプリセット」は、①の記録だけを外した依存で再現する（記録が無ければ作り話をしない）
+    deps = make_deps(Settings(self_origin=SELF))
+    deps.replays.pop("lp_self")
+    status, ev = run_preset(client(deps), "lp_self")
     assert first(ev, "mode")["available"] is False and first(ev, "result") is None
     assert first(ev, "error")["code"] == "KILLED"
 

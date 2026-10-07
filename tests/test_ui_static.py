@@ -154,7 +154,15 @@ def test_no_real_url_project_id_email_or_key_in_shipped_files(path):
 def test_the_bundled_replays_carry_no_page_text_beyond_the_verified_quotes():
     for p in REPLAY.glob("*.json"):
         rec = json.loads(p.read_text(encoding="utf-8"))
-        assert rec["mode"] == "REPLAY" and rec["reader_model"] == "oracle-reader"  # 台本の Reader で作ったと分かる
+        assert rec["mode"] == "REPLAY"
+        if p.stem in ("sample_defect", "sample_injection"):
+            assert rec["reader_model"] == "oracle-reader"  # 架空サンプルは台本の Reader で作ったと分かる
+        else:  # 実LPの記録: 取り込みの上限（引用80字・要件40件）を守り、URL・メール・鍵を持たない
+            reqs = rec["requirements"]
+            assert len(reqs) <= 40 and rec["omitted_requirements"] >= 0
+            assert all(len(r["span"]["original_span"]) <= 80 for r in reqs if r.get("span"))
+            assert all(len(r.get("gist") or "") <= 80 for r in reqs)
+            assert not scan_text(p.read_text(encoding="utf-8"))
         text = p.read_text(encoding="utf-8")
         assert "まちの落とし物マップ" not in text  # 提出物の本文（説明文）は記録に無い
         assert gen.INJECTION_TEXT not in text  # 偽の命令の本文も無い（スニペットはエスケープした60字まで）
