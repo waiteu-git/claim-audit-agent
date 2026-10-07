@@ -8,6 +8,8 @@
   * 無い時: code=TERMS_ABSENT・outcome=INCONCLUSIVE。不適合にするかは判定表が、文書の完全性
     （truncated=false・page_class=content）と要件の kind（必須）で決める。チェッカーは決めない。
   * doc_id は必ず付ける（判定表が文書の完全性を引く）。
+  * 非信頼の巨大な入力で時間を使わせないため、調べる長さに上限がある（1文書 TEXT_MAX_CHARS・1文 SENTENCE_MAX_CHARS）。上限の先は見て
+    いないので、見つからなくても TERMS_ABSENT にせず、不確定（code=ERROR・outcome=INCONCLUSIVE・facts reason=scan_truncated）で返す。
   * 注入疑いの区間（本文の INJECTION_PLACEHOLDER、または洗浄が記録した可視の検知区間）は命中に数えない
     （偽の命令の中に「テストアカウント」と書いて、案内があるように見せかけられないため）。そういう文書では TERMS_ABSENT を
     結論にしない（置き換えた区間に語があったかもしれない）。不確定（code=ERROR・outcome=INCONCLUSIVE・facts reason=masked_text）
@@ -49,8 +51,8 @@ _ACCOUNT_QUALIFIER_JA = r"(?:テスト|試験|検証|デモ|サンプル|ゲス�
 _ACCOUNT_NOUN_JA = r"(?:アカウント|ユーザー?(?:名)?|id|ログイン(?:情報|id)?|パスワード|認証情報)(?![a-z0-9])"
 _ACCOUNT_QUALIFIER_EN = r"(?:test|testing|demo|trial|sample|guest|reviewer|judge|judges|evaluator)"
 _ACCOUNT_NOUN_EN = r"(?:accounts?|users?|logins?|credentials?|passwords?|ids?)\b"
-_CREDENTIAL_PAIR = (
-    r"(?:id|user(?:name)?|ユーザー?名|ログインid)\s*[:=]\s*\S+[\s/,、]*(?:pw|pass(?:word)?|パスワード)\s*[:=]\s*\S+"
+_CREDENTIAL_PAIR = (  # 量指定は有界にする（提出物は非信頼。「id:id:id:…」の長い行で正規表現の戻りが二乗にならないように）
+    r"(?:id|user(?:name)?|ユーザー?名|ログインid)\s{0,4}[:=]\s{0,4}\S{1,64}[\s/,、]{0,8}(?:pw|pass(?:word)?|パスワード)\s{0,4}[:=]\s{0,4}\S{1,64}"
 )
 
 GUIDANCE_TERMS: dict[str, re.Pattern[str]] = {
@@ -131,16 +133,26 @@ def _masked_text(doc: SanitizedDoc) -> tuple[str, bool]:
     return masked, INJECTION_PLACEHOLDER in masked
 
 
-def _sentences(text: str) -> Iterator[str]:
-    for s in _SENTENCE_SPLIT.split(text):
+SENTENCE_MAX_CHARS = 2000  # 1文あたりに調べる長さ。提出物は非信頼なので、区切りの無い巨大な行で時間を使わせない
+TEXT_MAX_CHARS = 400_000  # 1文書あたりに調べる長さ（洗浄後の本文の上限は 1MiB。これを超える先は見ない）
+
+
+def _split(text: str) -> tuple[list[str], bool]:
+    """文に分ける。上限（TEXT_MAX_CHARS・SENTENCE_MAX_CHARS）を超えて見なかった部分があれば True（「無い」を結論にしない）。"""
+    truncated = len(text) > TEXT_MAX_CHARS
+    out: list[str] = []
+    for s in _SENTENCE_SPLIT.split(text[:TEXT_MAX_CHARS]):
         s = s.strip()
+        if len(s) > SENTENCE_MAX_CHARS:
+            truncated, s = True, s[:SENTENCE_MAX_CHARS]
         if s:
-            yield s
+            out.append(s)
+    return out, truncated
 
 
-def _guidance_hits(text: str) -> dict[str, int]:
+def _guidance_hits(sentences: list[str]) -> dict[str, int]:
     hits: dict[str, int] = {}
-    for sentence in _sentences(text):
+    for sentence in sentences:
         folded = _fold(sentence)
         if _NOT_GUIDANCE.search(folded):
             continue
@@ -209,7 +221,12 @@ def check_contains_terms(req: VerifiedRequirement, doc: SanitizedDoc, obs_id: st
     if req.check_class not in (CheckClass.GUIDANCE_PRESENT, CheckClass.URL_PRESENT):
         return _obs(req, obs_id, ObsCode.NO_PARAMETER, ObsOutcome.INCONCLUSIVE, doc, {"reason": "no_terms_for_class"})
     text, masked = _masked_text(doc)
-    hits = _guidance_hits(text) if req.check_class is CheckClass.GUIDANCE_PRESENT else _url_hits(doc, text)
+    if req.check_class is CheckClass.GUIDANCE_PRESENT:
+        sentences, truncated = _split(text)
+        hits = _guidance_hits(sentences)
+    else:
+        truncated = len(text) > TEXT_MAX_CHARS
+        hits = _url_hits(doc, text[:TEXT_MAX_CHARS])
     if hits:
         facts: dict = {k: min(n, 99) for k, n in sorted(hits.items())}
         facts["hits"] = min(sum(hits.values()), 999)
@@ -218,4 +235,6 @@ def check_contains_terms(req: VerifiedRequirement, doc: SanitizedDoc, obs_id: st
         return _obs(req, obs_id, ObsCode.TERMS_FOUND, ObsOutcome.PASS, doc, facts)
     if masked:
         return _obs(req, obs_id, ObsCode.ERROR, ObsOutcome.INCONCLUSIVE, doc, {"reason": "masked_text"})
+    if truncated:  # 調べる長さの上限の先は見ていない。「無い」とは言わない
+        return _obs(req, obs_id, ObsCode.ERROR, ObsOutcome.INCONCLUSIVE, doc, {"reason": "scan_truncated"})
     return _obs(req, obs_id, ObsCode.TERMS_ABSENT, ObsOutcome.INCONCLUSIVE, doc, {"chars": min(len(doc.visible_text), 999999)})

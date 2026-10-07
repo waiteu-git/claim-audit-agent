@@ -250,3 +250,37 @@ def test_found_on_any_page_wins_over_an_absence_on_another():
     nothing = sub("案内のページです。地図を開く。", "D3")
     obs = (check_contains_terms(req(), first, "O1"), check_contains_terms(req(), nothing, "O2"))
     assert verdict(req(), first, kind_obs=obs, extra_docs=(nothing,)).label is C.VerdictLabel.FAIL
+
+
+# ---- 非信頼の巨大な入力（提出物は攻撃者が書ける）で時間を使わせない -------------------------------------------
+@pytest.mark.parametrize(
+    "text",
+    [
+        "id:" * 150_000,  # 認証情報の形に見える繰り返し
+        "test" + " " * 300_000 + "account",
+        "テスト" * 120_000,
+        "http://" + "a" * 300_000 + ".youtube.com/x",
+        ("ID: " + "x" * 5_000 + " PW: ") * 40,
+        "あ。" * 150_000,
+    ],
+)
+@pytest.mark.parametrize("check_class", [CheckClass.GUIDANCE_PRESENT, CheckClass.URL_PRESENT])
+def test_huge_adversarial_lines_are_scanned_in_bounded_time(text, check_class):
+    import time
+
+    t0 = time.perf_counter()
+    run(text, check_class)
+    assert time.perf_counter() - t0 < 2.0
+
+
+def test_the_scan_stops_at_the_length_bounds_and_then_never_says_absent():
+    from app.checks.contains_terms import SENTENCE_MAX_CHARS, TEXT_MAX_CHARS
+
+    for text in ("あ" * SENTENCE_MAX_CHARS + "テスト用アカウント", ("ああ。" * (TEXT_MAX_CHARS // 3 + 10)) + "テスト用アカウント"):
+        o = run(text)  # 上限の先は見ていないので「無い」とは言わない
+        assert (o.code, o.outcome, o.facts) == (ObsCode.ERROR, ObsOutcome.INCONCLUSIVE, {"reason": "scan_truncated"})
+    assert run("テスト用アカウントです。" + "あ" * (SENTENCE_MAX_CHARS * 2)).code is ObsCode.TERMS_FOUND  # 上限の手前で見つかれば有効
+    far = run("a" * (TEXT_MAX_CHARS + 5), CheckClass.URL_PRESENT)
+    assert far.facts == {"reason": "scan_truncated"}
+    v = verdict(req(), sub("あ" * (SENTENCE_MAX_CHARS + 1)))
+    assert v.label is C.VerdictLabel.UNVERIFIABLE  # 判定表は、見ていない部分を「無い」の根拠にしない
