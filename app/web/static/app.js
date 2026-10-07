@@ -48,6 +48,39 @@
     DEGRADED: "上限などにより部分結果です。未検査の要件は理由つきの確認不能で表示しています。",
     ABORTED: "実行を中止しました。判定は出していません。",
   };
+  // 引用検証（QuoteRejectReason）の理由コード → 画面の語
+  const QUOTE_REJECT_JA = {
+    empty: "引用が空",
+    not_found: "原文に無い（言い換え・省略・他の文書のみ）",
+    too_short: "短すぎる",
+    short_not_allowed: "短い引用は条件を満たさない",
+    too_long: "長すぎる",
+    elided: "省略記号を含む",
+    ambiguous: "原文に何度も出てきて、どれか決まらない",
+    crosses_block: "表のセルなど、区切りをまたいでいる",
+    injection_overlap: "偽の命令の疑いのある所と重なる",
+  };
+  const OBS_JA = {
+    OK: "取得できた",
+    AUTH_WALL: "ログイン壁の印あり",
+    NO_AUTH_WALL: "ログイン不要で開ける",
+    SPA_SHELL: "JavaScript の描画が必要",
+    TRANSIENT: "一時的に取得できず",
+    WITHIN_LIMIT: "字数は上限以内",
+    OVER_LIMIT: "字数が上限を超過",
+    LIMIT_UNDECIDABLE: "数え方で結論が割れる",
+    TERMS_FOUND: "求められた語が本文にある",
+    TERMS_ABSENT: "求められた語が本文に無い",
+    LEAK_FOUND: "公開してはいけない文字列あり",
+    NO_LEAK: "公開してはいけない文字列なし",
+    SIGNATURE_PRESENT: "実行環境の署名あり",
+    SIGNATURE_ABSENT: "実行環境の署名を確認できず",
+    BLOCKED: "取得は許可の範囲外",
+    UNSUPPORTED_TYPE: "対応していない形式",
+    NO_PARAMETER: "検査に使う値を引用から取れず",
+    ERROR: "観測に失敗",
+  };
+  const TOOL_JA = { run_check: "検査", fetch_link: "リンク先を取得", http_probe: "到達検査", mark_unverifiable: "確認不能の印", finish: "終了" };
   const GAUGES = [
     ["model_calls_left", "model_calls", "モデル呼び出し"],
     ["tokens_in_left", "tokens_in", "入力トークン"],
@@ -58,7 +91,7 @@
   ];
 
   const $ = (id) => document.getElementById(id);
-  const state = { selected: null, judge: null, caps: {}, running: false, traceCount: 0 };
+  const state = { selected: null, judge: null, caps: {}, running: false, traceCount: 0, events: [] };
 
   function el(tag, opts, children) {
     const n = document.createElement(tag);
@@ -194,7 +227,10 @@
     for (const id of ["summary", "contradictions", "trace", "budget", "source-body"]) clear($(id));
     clear($("reqs").tBodies[0]);
     for (const id of ["warning", "status-note", "contradictions", "source"]) $(id).hidden = true;
+    for (const id of ["quote-band", "replan-band"]) $(id).hidden = true;
+    for (const id of ["quote-band-sum", "quote-examples", "replan-steps", "replan-end"]) clear($(id));
     $("run-mode").textContent = "";
+    state.events = [];
     state.traceCount = 0;
     $("trace-count").textContent = "0";
   }
@@ -217,6 +253,7 @@
   // ---- トレース・予算ゲージ ----
   function onTrace(ev) {
     state.traceCount += 1;
+    if (state.events.length < 1000) state.events.push(ev);
     $("trace-count").textContent = String(state.traceCount);
     const parts = ["#" + ev.seq, (ev.t_ms || 0) + "ms", ev.phase, ev.actor, ev.type];
     for (const k of ["name", "req_id", "policy_id", "decision", "reason_code", "verdict", "obs_id"]) if (ev[k] !== undefined) parts.push(k + "=" + ev[k]);
@@ -282,7 +319,101 @@
       n.hidden = false;
     }
     renderContradictions(rec);
+    const events = Array.isArray(rec.events) && rec.events.length ? rec.events : state.events;
+    renderQuoteBand(rec, events);
+    renderReplanBand(rec, events);
     renderTable(rec);
+  }
+
+  // ---- コードが検証した引用（要約と、モデルの引用をコードが弾いた例）----
+  // 必要なフィールドが無い記録（古い記録・省略された記録）では帯を出さない。
+  function quoteExample(ev, reqs) {
+    const steps = Array.isArray(ev.quote_steps) ? ev.quote_steps : [];
+    const rejected = steps.filter((x) => x && x.outcome === "rejected");
+    if (!rejected.length) return null;
+    const req = reqs[ev.req_id];
+    const unverified = steps.some((x) => x && x.outcome === "demoted" && x.reason_code === "quote_unverified");
+    const requoted = steps.some((x) => x && x.attempt === 2 && x.outcome === "verified");
+    const first = rejected[0];
+    return {
+      reqId: ev.req_id,
+      seq: ev.seq,
+      model: first.model_quote || "",
+      reason: QUOTE_REJECT_JA[first.reason_code] || first.reason_code || "",
+      result: unverified ? "demoted" : requoted ? "requoted" : "verified",
+      original: req && req.span ? req.span.original_span : "",
+    };
+  }
+
+  function renderQuoteBand(rec, events) {
+    const s = rec.summary;
+    if (!s || typeof s.quotes_checked !== "number" || typeof s.quotes_verbatim !== "number" || s.quotes_checked <= 0) return;
+    const sum = "引用検証 " + fmt(s.quotes_checked) + "件中" + fmt(s.quotes_verbatim) + "件が逐語一致・" +
+      fmt(s.demoted_to_speculative || 0) + "件を推測へ降格";
+    $("quote-band-sum").textContent = sum;
+    const reqs = {};
+    for (const r of rec.requirements || []) reqs[r.req_id] = r;
+    const ex = [];
+    for (const ev of events || []) {
+      if (!ev || ev.type !== "quote_check") continue;
+      const x = quoteExample(ev, reqs);
+      if (x) ex.push(x);
+      if (ex.length >= 3) break;
+    }
+    const ul = $("quote-examples");
+    clear(ul);
+    for (const x of ex) {
+      const li = el("li");
+      li.appendChild(el("span", { cls: "ex-head", text: x.reqId + "：モデルの引用をコードが原文と照合" }));
+      li.appendChild(el("span", { cls: "ex-model", text: "✕ 「" + clip(x.model, 80) + "」を棄却（" + x.reason + "）" }));
+      if (x.result === "requoted" && x.original) {
+        li.appendChild(el("span", { cls: "ex-code ex-ok", text: "→ 再引用 「" + clip(x.original, 80) + "」" }));
+        li.appendChild(el("span", { cls: "ex-result ex-ok", text: "✓ 原文と逐語で一致（コードが確認）" }));
+      } else if (x.result === "demoted") {
+        li.appendChild(el("span", { cls: "ex-result ex-demoted", text: "→ 再引用も一致せず、推測に降格（判定の根拠にしません）" }));
+      } else if (x.original) {
+        li.appendChild(el("span", { cls: "ex-code ex-ok", text: "→ 「" + clip(x.original, 80) + "」" }));
+        li.appendChild(el("span", { cls: "ex-result ex-ok", text: "✓ 原文と逐語で一致（コードが確認）" }));
+      }
+      ul.appendChild(li);
+    }
+    ul.hidden = ex.length === 0;
+    $("quote-band").hidden = false;
+  }
+
+  // ---- 判断が変わった場面（replan の印の前後）----
+  function obsText(code) { return code ? (OBS_JA[code] || code) : "結果なし"; }
+  function stepNode(kind, text, seq, change) {
+    const b = el("button", { cls: "step" + (change ? " step-change" : ""), attrs: { type: "button", title: "トレースの該当イベントへ" } }, [
+      el("span", { cls: "step-k", text: kind }),
+      el("span", { cls: "step-v", text: text }),
+    ]);
+    b.addEventListener("click", () => jumpTo(seq));
+    return el("li", null, [b]);
+  }
+
+  function renderReplanBand(rec, events) {
+    const list = Array.isArray(events) ? events : [];
+    const mark = list.find((e) => e && e.type === "replan" && e.obs_id);
+    if (!mark) return;
+    const trigger = list.find((e) => e && e.type === "tool_result" && e.obs_id === mark.obs_id);
+    if (!trigger) return;
+    const after = list.filter((e) => e && e.type === "tool_result" && e.seq > mark.seq);
+    const moved = after[0];
+    const next = after.find((e, i) => i > 0 && e.name === trigger.name && e.req_id === mark.req_id);
+    const req = mark.req_id ? "（" + mark.req_id + "）" : "";
+    const steps = $("replan-steps");
+    clear(steps);
+    steps.appendChild(stepNode("① 観測", (TOOL_JA[trigger.name] || trigger.name) + req + " → " + obsText(trigger.reason_code), trigger.seq, false));
+    steps.appendChild(stepNode("② 次の手（方針変更）", (TOOL_JA[mark.name] || mark.name) + "：別のページを調べ直す" + (moved ? " → " + obsText(moved.reason_code) : ""), mark.seq, true));
+    if (next) steps.appendChild(stepNode("③ 続く観測", (TOOL_JA[next.name] || next.name) + req + " → " + obsText(next.reason_code), next.seq, false));
+    const verdict = (rec.verdicts || []).find((v) => v.req_id === mark.req_id);
+    const end = $("replan-end");
+    if (verdict) {
+      end.textContent = mark.req_id + " の判定: " + verdict.label + "（観測からコードが決めました。モデルは書けません）";
+      end.hidden = false;
+    }
+    $("replan-band").hidden = false;
   }
 
   function renderContradictions(rec) {

@@ -173,3 +173,41 @@ def test_the_leak_patterns_are_live_positive_controls():
     host = "x" + "." + "a.run" + ".app"
     hits = scan_text(f"連絡先 someone@example.invalid と https://svc-{host}/ と AIza{'A' * 35} と 10.1.2.3")
     assert {"email", "service_url", "google_api_key", "private_ip"} <= set(hits)
+
+
+# ---- 第5弾: 結果画面の2つの帯（コードが検証した引用・判断が変わった場面）----------------------------------
+def test_the_result_has_a_quote_band_and_a_replan_band_that_start_hidden():
+    p = _parsed()
+    by_id = {a.get("id"): a for t, a in p.tags if a.get("id")}
+    for rid in ("quote-band", "quote-band-sum", "quote-examples", "replan-band", "replan-steps", "replan-end"):
+        assert rid in by_id, rid
+    assert "hidden" in by_id["quote-band"] and "hidden" in by_id["replan-band"]  # 材料の無い実行では出さない
+    assert "コードが検証した引用" in HTML and "判断が変わった場面" in HTML
+
+
+def test_the_quote_band_summary_and_examples_follow_the_agreed_wording_and_limits():
+    assert '"引用検証 " + fmt(s.quotes_checked) + "件中" + fmt(s.quotes_verbatim) + "件が逐語一致・"' in JS
+    assert '"件を推測へ降格"' in JS
+    assert "ex.length >= 3" in JS  # 弾いた例は最大3件
+    assert JS.count("clip(x.model, 80)") == 1 and JS.count("clip(x.original, 80)") == 2  # 原文の引用は80字まで
+
+
+def test_the_bands_do_not_break_when_the_record_lacks_the_fields_they_need():
+    # 必要なフィールドが無い記録では帯を出さない（描かずに戻る）。ブラウザでの確認は、欠けた・壊れた記録で例外が出ないことを手元で見た
+    assert 'typeof s.quotes_checked !== "number"' in JS and "s.quotes_checked <= 0" in JS
+    assert "Array.isArray(rec.events)" in JS and "Array.isArray(ev.quote_steps)" in JS
+    assert "if (!mark) return;" in JS and "if (!trigger) return;" in JS
+
+
+def test_the_replan_band_shows_two_or_three_steps_each_jumping_to_the_trace():
+    block = JS.split("function renderReplanBand")[1].split("function renderContradictions")[0] if "function renderReplanBand" in JS else JS.split("function renderReplanBand")[1]
+    assert block.count("stepNode(") == 3 and "jumpTo(seq)" in JS
+
+
+def test_the_ui_explains_that_the_code_decides_and_names_no_other_product_or_distributed_skill():
+    for text in (HTML, JS):
+        assert "判定は観測からコードが決めます" in text
+    assert "モデルは書けません" in HTML
+    for name, text in UI_FILES.items():
+        for word in ("スキル", "他社", "競合", "比較して"):
+            assert word not in text, (name, word)

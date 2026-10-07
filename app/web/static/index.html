@@ -37,9 +37,22 @@
     <div id="summary" class="summary" aria-live="polite"></div>
     <div id="contradictions" class="contradictions" hidden></div>
 
+    <section id="quote-band" class="band" aria-labelledby="h-quote" hidden>
+      <h3 id="h-quote">コードが検証した引用</h3>
+      <p id="quote-band-sum" class="band-sum"></p>
+      <ul id="quote-examples" class="examples" aria-label="モデルの引用をコードが弾いた例" hidden></ul>
+    </section>
+
+    <section id="replan-band" class="band" aria-labelledby="h-replan" hidden>
+      <h3 id="h-replan">判断が変わった場面</h3>
+      <p class="note">検査の結果が不確定だったので、次の手を変えた場面です（変えたことはコードが観測から検出して記録します）。</p>
+      <ol id="replan-steps" class="steps"></ol>
+      <p id="replan-end" class="band-sum" hidden></p>
+    </section>
+
     <div class="table-wrap">
       <table id="reqs">
-        <caption>要件と判定（判定は観測からコードが決めます）</caption>
+        <caption>要件と判定（判定は観測からコードが決めます。モデルは書けません）</caption>
         <thead>
           <tr><th scope="col">ID</th><th scope="col">種別</th><th scope="col">要件（原文の引用）</th><th scope="col">出典</th><th scope="col">判定</th><th scope="col">理由・証拠</th></tr>
         </thead>
@@ -67,7 +80,7 @@
 </main>
 
 <footer class="foot">
-  <p>判定は観測からコードが決めます。モデルは判定を書けません。サンプルの要項・提出物はすべて架空です。</p>
+  <p>判定は観測からコードが決めます。モデルは書けません。サンプルの要項・提出物はすべて架空です。</p>
 </footer>
 </body>
 </html>

@@ -144,6 +144,23 @@ th:nth-child(5) { width: 7.5em; }
 .source dd { margin: 0; }
 .source mark { background: var(--warn-bg); color: inherit; }
 
+.band { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 8px 12px; margin: 8px 0 12px; }
+.band .note { margin: 4px 0; }
+.band-sum { margin: 4px 0; font-weight: 600; }
+.examples { list-style: none; padding: 0; margin: 8px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+.examples li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); }
+.examples .ex-head { display: block; font-size: 0.85rem; color: var(--muted); }
+.examples .ex-model { display: block; margin: 2px 0; color: var(--fail); }
+.examples .ex-code { display: block; margin: 2px 0; }
+.examples .ex-result { display: block; font-weight: 600; }
+.examples .ex-ok { color: var(--ok); }
+.examples .ex-demoted { color: var(--unk); }
+.steps { list-style: none; padding: 0; margin: 8px 0 0; display: flex; gap: 8px; align-items: stretch; }
+.steps li { flex: 1 1 0; min-width: 0; }
+.step { display: block; width: 100%; height: 100%; text-align: left; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); color: var(--text); cursor: pointer; }
+.step .step-k { display: block; font-size: 0.85rem; color: var(--muted); }
+.step .step-v { display: block; margin-top: 2px; }
+.step-change { border-color: var(--accent); }
 .box { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
 .box summary { cursor: pointer; font-weight: 600; }
 .budget { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 16px; margin-top: 8px; }
@@ -165,4 +182,6 @@ th:nth-child(5) { width: 7.5em; }
   td { border: 0; padding: 4px 0; }
   td::before { content: attr(data-label); display: block; font-size: 0.8rem; color: var(--muted); }
   .source dl { grid-template-columns: 1fr; }
+  .steps { flex-direction: column; }
+  .examples { grid-template-columns: 1fr; }
 }
