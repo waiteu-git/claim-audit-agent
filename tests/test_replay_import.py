@@ -157,3 +157,29 @@ def test_playback_shows_the_clipped_record_without_reverifying(tmp_path, monkeyp
 
 def test_bundled_fixture_replays_are_unchanged_in_content_and_still_checked():
     assert replay.check() == []
+
+
+def test_check_accepts_imported_live_fixture_records_and_flags_tampering(tmp_path):
+    """実モデルの実行記録を取り込んだ②③は、再生成と一致を見ない（できない）。代わりに、契約の読み込みと漏洩の走査を繰り返す。
+    台本の記録（reader_model=oracle-reader）は従来どおり再生成と一致するかを見る。"""
+    import json as _json
+    import shutil
+
+    for pid in replay.FIXTURE_REPLAYS:
+        shutil.copy(replay.REPLAY_DIR / f"{pid}.json", tmp_path)
+    assert replay.check(tmp_path) == []
+    p = tmp_path / "sample_defect.json"
+    original = p.read_text(encoding="utf-8")
+    d = _json.loads(original)
+    if d["reader_model"] != replay.ORACLE_READER:  # 実モデルの記録: 漏洩（メール）を混ぜたら差分として出る
+        d["docs"][0]["label"] = "x someone@example.invalid"
+        p.write_text(_json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        assert replay.check(tmp_path) == ["sample_defect.json"]
+        p.write_text(original, encoding="utf-8")
+        d = _json.loads(original)
+        d["reader_model"] = replay.ORACLE_READER  # 台本の記録を名乗るなら、再生成と一致しなければ差分
+        p.write_text(_json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        assert replay.check(tmp_path) == ["sample_defect.json"]
+    p.write_text(original, encoding="utf-8")
+    p.unlink()
+    assert replay.check(tmp_path) == ["sample_defect.json"]  # 記録が無いのも差分

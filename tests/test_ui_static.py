@@ -156,7 +156,8 @@ def test_the_bundled_replays_carry_no_page_text_beyond_the_verified_quotes():
         rec = json.loads(p.read_text(encoding="utf-8"))
         assert rec["mode"] == "REPLAY"
         if p.stem in ("sample_defect", "sample_injection"):
-            assert rec["reader_model"] == "oracle-reader"  # 架空サンプルは台本の Reader で作ったと分かる
+            # 架空サンプルは、台本の Reader で作った記録（oracle-reader）か、実モデルの実行記録を取り込んだもの（モデル名が記録に残る）
+            assert rec["reader_model"] == "oracle-reader" or rec["reader_model"].startswith("gemini-")
         else:  # 実LPの記録: 取り込みの上限（引用80字・要件40件）を守り、URL・メール・鍵を持たない
             reqs = rec["requirements"]
             assert len(reqs) <= 40 and rec["omitted_requirements"] >= 0
@@ -220,7 +221,10 @@ def _replay(pid):
 
 def test_the_bundled_preset_2_replay_contains_a_replan_and_the_guide_page_it_followed():
     rec = _replay("sample_defect")
-    assert rec["planner_model"] == "rule-planner" and rec["reader_model"] == "oracle-reader"  # 実モデルの記録と偽らない
+    # 台本の記録（oracle-reader＋rule-planner）か、実モデルの実行記録（モデル名が残る）か。どちらでも記録のモデル名は実際のもの
+    scripted = (rec["reader_model"], rec["planner_model"]) == ("oracle-reader", "rule-planner")
+    live = rec["reader_model"].startswith("gemini-") and rec["planner_model"].startswith("gemini-")
+    assert scripted or live
     ev = rec["events"]
     mark = next(e for e in ev if e["type"] == "replan")
     trigger = next(e for e in ev if e["type"] == "tool_result" and e["obs_id"] == mark["obs_id"])

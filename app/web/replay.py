@@ -165,12 +165,35 @@ def load_replays(root: Path = REPLAY_DIR) -> dict[str, ReplayBundle]:
     return out
 
 
+ORACLE_READER = "oracle-reader"  # --write が作る台本の記録の reader_model（実モデルの記録と区別する印）
+
+
 def check(root: Path = REPLAY_DIR) -> list[str]:
+    """同梱の②③の記録を確かめる。台本から作った記録（reader_model=oracle-reader）は、再生成と一致するか。
+    実モデルの実行記録を --import で取り込んだもの（reader_model が別）は再生成できないので、一致ではなく、
+    契約の読み込みと漏洩の走査を通ることを確かめる（取り込み時にも通した検査を、同梱後の改変に対して繰り返す）。"""
     diff = []
     for pid in FIXTURE_REPLAYS:
-        want = bundle_text(asyncio.run(build_fixture_record(pid)))
         p = root / f"{pid}.json"
-        if not p.is_file() or p.read_text(encoding="utf-8") != want:
+        if not p.is_file():
+            diff.append(p.name)
+            continue
+        have = p.read_text(encoding="utf-8")
+        try:
+            imported = json.loads(have).get("reader_model") != ORACLE_READER
+        except ValueError:
+            diff.append(p.name)
+            continue
+        if imported:
+            try:
+                load_bundle(p)
+            except Exception:  # noqa: BLE001  壊れた同梱物は差分として出す
+                diff.append(p.name)
+                continue
+            if leak_findings(have):
+                diff.append(p.name)
+            continue
+        if have != bundle_text(asyncio.run(build_fixture_record(pid))):
             diff.append(p.name)
     return diff
 
