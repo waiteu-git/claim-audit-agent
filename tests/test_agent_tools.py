@@ -232,7 +232,8 @@ async def test_mark_unverifiable_records_a_planner_mark_with_the_premise():
 
 
 async def test_finish_returns_finished_and_the_unadmitted_cannot_be_executed():
-    state, gov, reg = setup()
+    state, gov, reg = setup(RoutedFetch({(SUB_URL, FetchMode.PROBE): make_result(SUB_URL)}))
+    await reg.execute(call(gov, "http_probe", target="SUBMISSION_URL", reason="到達検査"))  # auth_wall は probe が先
     for rid, chk in (("R1", "text_length"), ("R2", "auth_wall")):
         await reg.execute(call(gov, "run_check", checker=chk, req_id=rid))
     res = await reg.execute(call(gov, "finish"))

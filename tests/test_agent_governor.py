@@ -145,7 +145,8 @@ def test_identical_call_is_denied_as_duplicate():
 
 def test_run_check_may_be_repeated_only_after_new_evidence_arrived():
     state, gov = world()
-    assert gov.admit(fc("run_check", checker="auth_wall", req_id="R2")).allowed  # probe の前に呼んで不確定になる想定
+    state.probed_targets.add("SUBMISSION_URL")  # probe は済んでいる（probe 前の run_check は PROBE_FIRST で拒否する＝別のテストで固定）
+    assert gov.admit(fc("run_check", checker="auth_wall", req_id="R2")).allowed  # 1回目（不確定になる想定）
     state.observations.append(probe_obs(ObsCode.ERROR, ObsOutcome.INCONCLUSIVE, target="SUBMISSION_URL", obs_id="O1"))  # その結果（自分の1件）
     assert gov.admit(fc("run_check", checker="auth_wall", req_id="R2")).reason == "DUPLICATE_CALL"  # 新しい証拠なしの繰り返し
     state.observations.append(probe_obs(obs_id="O2"))  # 別の観測（probe の結果）が増えた
@@ -345,7 +346,13 @@ def test_finish_is_refused_while_a_checkable_requirement_is_untouched():
     assert gov.pending_checks() == ["R1", "R2"]
     assert gov.admit(fc("finish")).reason == "OPEN_REQUIREMENTS"
     gov.admit(fc("run_check", checker="text_length", req_id="R1"))
-    gov.admit(fc("run_check", checker="auth_wall", req_id="R2"))
+    # auth_wall は probe が先。probe 前の run_check は拒否され、R2 は未着手のまま＝finish はまだ出せない
+    assert gov.admit(fc("run_check", checker="auth_wall", req_id="R2")).reason == "PROBE_FIRST"
+    assert gov.pending_checks() == ["R2"]
+    assert gov.admit(fc("finish")).reason == "OPEN_REQUIREMENTS"
+    state.probed_targets.add("SUBMISSION_URL")  # probe が済んだ（実際は http_probe の実行で観測が増える＝状態が変わる）
+    state.observations.append(probe_obs(obs_id="O1"))
+    assert gov.admit(fc("run_check", checker="auth_wall", req_id="R2")).allowed
     assert gov.pending_checks() == []
     assert gov.admit(fc("finish")).allowed
 

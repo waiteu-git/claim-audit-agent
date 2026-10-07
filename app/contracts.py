@@ -452,6 +452,7 @@ class DenialCode(StrEnum):
     ORIGIN_CAP = "ORIGIN_CAP"
     UNKNOWN_REQ = "UNKNOWN_REQ"
     NOT_CHECKABLE = "NOT_CHECKABLE"
+    PROBE_FIRST = "PROBE_FIRST"  # auth_wall・cloud_run_signature は、先に http_probe の観測が要る
     CLASS_MISMATCH = "CLASS_MISMATCH"
     REQ_CAP = "REQ_CAP"
     SPECULATIVE = "SPECULATIVE"

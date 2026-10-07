@@ -114,3 +114,56 @@ async def test_router_and_planner_both_end_done_under_the_same_conditions():
         await run_planner(s2, g2, r2, ScriptedPort([make_follower()] * 8))
         assert g1.status is g2.status is RunStatus.DONE
         assert {o.req_id for o in s1.observations if o.req_id} == {o.req_id for o in s2.observations if o.req_id}
+
+
+# ---- 10/7 夜の2回目の実測: Planner が http_probe を飛ばして auth_wall を run_check し、ERROR（no_probe）を繰り返した -------------------
+def _only_auth_wall_world():
+    state, gov = make_world(reqs=(raw(AUTH_SENTENCE, Kind.REQUIRED, CheckClass.AUTH_WALL),), submission_text="あ" * 120)
+    return state, gov, ToolRegistry(state=state, governor=gov, fetch=standard_fetch())
+
+
+def test_auth_wall_is_offered_as_a_probe_first_and_run_check_only_after_the_probe():
+    from app.agent.planner import build_state_view
+
+    state, gov, _ = _only_auth_wall_world()
+    req = state.requirements[0]
+    assert state.can_run_check(req) and state.needs_probe_first(req) and not state.ready_to_run_check(req)
+    view = build_state_view(state, gov, 1, 8, gov.allowed_tools())
+    assert view.requirements[0].routes == ("http_probe:SUBMISSION_URL",)
+    assert ToolName.RUN_CHECK not in gov.allowed_tools() and ToolName.HTTP_PROBE in gov.allowed_tools()
+    state.probed_targets.add("SUBMISSION_URL")  # probe が済んだ
+    view = build_state_view(state, gov, 2, 8, gov.allowed_tools())
+    assert view.requirements[0].routes == ("run_check:auth_wall",)
+    assert ToolName.RUN_CHECK in gov.allowed_tools()
+
+
+async def test_a_planner_that_skips_the_probe_is_denied_with_a_reason_not_given_an_error_observation():
+    """実モデルの癖を再現: routes を見ずに、いきなり run_check(auth_wall) を出す。ERROR の観測は作らず PROBE_FIRST で拒否する。"""
+    state, gov, reg = _only_auth_wall_world()
+    calls = [reply_calls(("run_check", {"checker": "auth_wall", "req_id": "R1"})), reply_calls(("finish", {}))]
+    await run_planner(state, gov, reg, ScriptedPort(calls))
+    assert ("P-PHASE-02", "TOOL_NOT_ALLOWED") in denials(gov) or ("P-PHASE-02", "PROBE_FIRST") in denials(gov)
+    assert ObsCode.ERROR not in {o.code for o in state.observations}
+
+
+async def test_the_planner_probes_first_when_it_follows_the_offered_route():
+    state, gov, reg = _only_auth_wall_world()
+    await run_planner(state, gov, reg, ScriptedPort([make_follower()] * 6))
+    assert denials(gov) == [] and gov.status is RunStatus.DONE
+    assert [o.tool for o in state.observations][:2] == [ToolName.HTTP_PROBE, ToolName.RUN_CHECK]
+    assert ObsCode.ERROR not in {o.code for o in state.observations}
+
+
+def test_the_governor_denies_run_check_before_the_probe_with_probe_first():
+    from app.contracts import FunctionCall
+
+    # 別の要件（字数）が検査できる状態＝run_check 自体は許可リストにある時でも、probe 前の auth_wall は拒否する
+    state, gov = make_world(
+        reqs=(raw(AUTH_SENTENCE, Kind.REQUIRED, CheckClass.AUTH_WALL), raw(LEN_SENTENCE, Kind.REQUIRED, CheckClass.LENGTH_LIMIT)),
+        submission_text="あ" * 120,
+    )
+    assert ToolName.RUN_CHECK in gov.allowed_tools()
+    gov.begin_turn(1, 8, gov.allowed_tools())
+    adm = gov.admit(FunctionCall(name="run_check", args={"checker": "auth_wall", "req_id": "R1"}))
+    assert not adm.allowed and adm.reason == "PROBE_FIRST"
+    assert ObsCode.ERROR not in {o.code for o in state.observations}

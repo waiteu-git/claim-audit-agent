@@ -96,7 +96,9 @@ def test_routes_come_from_the_table_and_empty_when_not_checkable():
     state, gov, _ = setup()
     r1, r2, r3 = state.requirements
     assert routes_for(state, r1) == ("run_check:text_length",)
-    assert routes_for(state, r2) == ("http_probe:SUBMISSION_URL", "run_check:auth_wall")
+    assert routes_for(state, r2) == ("http_probe:SUBMISSION_URL",)  # probe が先。済むまで run_check は手順に出さない
+    state.probed_targets.add("SUBMISSION_URL")
+    assert routes_for(state, r2) == ("run_check:auth_wall",)
     assert routes_for(state, r3) == ()
 
 
@@ -348,3 +350,21 @@ async def test_router_obeys_the_kill_switch():
 
 def test_inspect_mode_values():
     assert {m.value for m in InspectMode} == {"planner", "router"}
+
+
+def test_state_view_keeps_actionable_requirements_and_their_routes_among_many_unactionable_ones():
+    """回帰（10/7 のライブ実行）: 要件64件の実LPで、手順を先に削り、手段の無い要件が先頭8件を占めた結果、
+    検査すべき要件が見えず Planner が finish を繰り返して DEGRADED になった。着手できる要件は、末尾にあっても残す。"""
+    unactionable = [f"項目{i:02d}は参加者が自分の判断で進めること。" for i in range(60)]
+    actionable = [f"項目{i:02d}は提出物に含める説明の字数を100字以内とすること。" for i in range(60, 64)]
+    text = "応募要項\u001e" + "\u001e".join(unactionable + actionable)
+    reqs = tuple(raw(s, Kind.REQUIRED, CheckClass.NONE) for s in unactionable) + tuple(
+        raw(s, Kind.REQUIRED, CheckClass.LENGTH_LIMIT) for s in actionable
+    )
+    state, gov = make_world(spec_text=text, reqs=reqs)
+    assert len(state.requirements) == 64
+    v = view_of(state, gov)
+    assert v.size_bytes() <= STATE_VIEW_TARGET_BYTES
+    rows = {r.req_id: r for r in v.requirements}
+    for rid in ("R61", "R62", "R63", "R64"):
+        assert rid in rows and rows[rid].routes == ("run_check:text_length",), rid

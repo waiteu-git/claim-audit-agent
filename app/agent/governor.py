@@ -308,7 +308,7 @@ class Governor:
             tools.append(ToolName.HTTP_PROBE)
         st = self.state
         if any(
-            st.can_run_check(r) and st.req_state(r) is ReqState.OPEN and st.calls_used(r.req_id) < self.meter.caps.tool_calls_per_requirement
+            st.ready_to_run_check(r) and st.req_state(r) is ReqState.OPEN and st.calls_used(r.req_id) < self.meter.caps.tool_calls_per_requirement
             for r in st.requirements
         ):
             tools.append(ToolName.RUN_CHECK)
@@ -445,6 +445,8 @@ class Governor:
                 return self._deny(PolicyId.PHASE, "NOT_CHECKABLE", name=name, req_id=req.req_id)
             if CHECK_CLASS_CHECKER[req.check_class] is not a.checker:  # type: ignore[union-attr]
                 return self._deny(PolicyId.PHASE, "CLASS_MISMATCH", name=name, req_id=req.req_id)
+            if st.needs_probe_first(req):
+                return self._deny(PolicyId.PHASE, "PROBE_FIRST", name=name, req_id=req.req_id)
             if st.calls_used(req.req_id) >= self.meter.caps.tool_calls_per_requirement:
                 return self._deny(PolicyId.BUDGET_CALLS, "REQ_CAP", name=name, req_id=req.req_id)
             return None

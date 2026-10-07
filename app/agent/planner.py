@@ -107,8 +107,9 @@ def routes_for(state: RunState, req: VerifiedRequirement) -> tuple[str, ...]:
         return ()
     checker = CHECK_CLASS_CHECKER[req.check_class]
     assert checker is not None
-    needs_probe = req.check_class in (CheckClass.AUTH_WALL, CheckClass.RUNTIME_SIGNATURE)
-    return (("http_probe:SUBMISSION_URL",) if needs_probe else ()) + (f"run_check:{checker.value}",)
+    if state.needs_probe_first(req):  # probe が済むまで run_check は手順に出さない（出すと probe を飛ばして ERROR になる）
+        return ("http_probe:SUBMISSION_URL",)
+    return (f"run_check:{checker.value}",)
 
 
 def _req_order(r: StateRequirement) -> tuple[int, int]:
@@ -118,7 +119,9 @@ def _req_order(r: StateRequirement) -> tuple[int, int]:
 def build_state_view(state: RunState, gov: Governor, turn: int, max_turns: int, allowed: tuple[ToolName, ...]) -> StateView:
     """Planner の唯一の入力。約3KB（STATE_VIEW_TARGET_BYTES）に収まるまで、重要でない行から間引く。
 
-    間引きの順: 手順の候補 → 完了済みの要件 → スコープ外のリンク → 取得済み・ログインのリンク → open の要件の後ろ。
+    間引きの順: 完了済みの要件 → 手順の無い要件（検査の手段が無く、Planner が着手できない）→ スコープ外のリンク →
+    取得済み・ログインのリンク → 着手できる要件の後ろ。**手順の候補は最後まで削らない**（Planner が次の手を決められる唯一の材料。
+    10/7 のライブ実行: 要件64件の実LPで、手順を先に削り、手段の無い要件が先頭8件を占めた結果、検査すべき要件が見えず finish を繰り返した）。
     Planner が見えなかった要件も、router・adjudicate は全件を扱う（間引きは見せ方だけで、判定に影響しない）。
     """
     reqs_all = sorted(
@@ -169,21 +172,22 @@ def build_state_view(state: RunState, gov: Governor, turn: int, max_turns: int, 
         )
 
     open_reqs = [r for r in reqs_all if r.state is ReqState.OPEN]
+    actionable = [r for r in open_reqs if r.routes]  # 今、着手できる（手順がある）要件
     in_scope_links = [lk for lk in links_all if lk.in_scope]
     attempts = [
-        (reqs_all, links_all, True),
-        (reqs_all, links_all, False),
-        (open_reqs, links_all, False),
-        (open_reqs, in_scope_links, False),
-        (open_reqs, [lk for lk in in_scope_links if not lk.fetched and lk.role is not LinkRole.LOGIN], False),
+        (reqs_all, links_all),
+        (open_reqs, links_all),
+        (actionable, links_all),
+        (actionable, in_scope_links),
+        (actionable, [lk for lk in in_scope_links if not lk.fetched and lk.role is not LinkRole.LOGIN]),
     ]
     for a in attempts:
-        view = make(*a)
+        view = make(*a, True)
         if view.size_bytes() <= STATE_VIEW_TARGET_BYTES:
             return view
-    # それでも超える時の最後の手段: 後ろの行から1つずつ落とす（open の要件は先頭の8件まで残す。文書は最後に）
+    # それでも超える時の最後の手段: 後ろの行から1つずつ落とす（着手できる要件は先頭の8件まで残す。文書は最後に）
     reqs, links, docs_l = list(attempts[-1][0]), list(attempts[-1][1]), list(docs)
-    view = make(reqs, links, False, tuple(docs_l))
+    view = make(reqs, links, True, tuple(docs_l))
     while view.size_bytes() > STATE_VIEW_TARGET_BYTES and (reqs or links or docs_l):
         if len(reqs) > 8:
             reqs.pop()
@@ -195,7 +199,7 @@ def build_state_view(state: RunState, gov: Governor, turn: int, max_turns: int, 
             reqs.pop()
         else:
             docs_l.pop()
-        view = make(reqs, links, False, tuple(docs_l))
+        view = make(reqs, links, True, tuple(docs_l))
     return view
 
 

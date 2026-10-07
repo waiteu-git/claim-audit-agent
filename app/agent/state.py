@@ -130,5 +130,18 @@ class RunState:
             return bool(self.preset.submission_url)
         return self.submission_doc_id is not None
 
+    def needs_probe_first(self, req: VerifiedRequirement) -> bool:
+        """検査の材料はあるが、先に http_probe が要る種類か。auth_wall・cloud_run_signature は probe の観測を要件に結び付けるだけで、
+        probe が無いと ERROR（no_probe）になる（10/7 のライブ実行: Planner が probe を飛ばして ERROR の run_check を繰り返した）。"""
+        return (
+            self.can_run_check(req)
+            and req.check_class in (CheckClass.AUTH_WALL, CheckClass.RUNTIME_SIGNATURE)
+            and "SUBMISSION_URL" not in self.probed_targets
+        )
+
+    def ready_to_run_check(self, req: VerifiedRequirement) -> bool:
+        """今すぐ run_check して意味のある観測が返る（材料があり、必要な probe が済んでいる）。"""
+        return self.can_run_check(req) and not self.needs_probe_first(req)
+
     def calls_used(self, req_id: str) -> int:
         return self.req_calls.get(req_id, 0)
