@@ -37,11 +37,17 @@ def test_quote_cap_agrees_with_the_contract_constant():
 
 
 # --- 単価・予約額 ----------------------------------------------------------------
-def test_price_table_is_provisional_and_says_so():
+def test_price_table_records_the_official_check_and_keeps_a_conservative_default():
     t = cfg.PRICE_TABLE
-    assert t.provisional and t.checked_on is None
-    assert "暫定" in t.source and "未確認" in t.source
+    assert not t.provisional and t.checked_on == "2026-10-08"  # 公式の料金ページを確認した日（確認日を更新せずに値だけ変えない）
+    assert "公式" in t.source and "¥150/$" in t.source
+    # 登録していないモデルは、安全側の暫定値で見積もる（予約額もこの default で最悪値を測る）
     assert (t.default.input_jpy_per_mtok, t.default.output_jpy_per_mtok) == (150, 750)
+    # 公式: gemini-2.5-flash は入力 $0.30・出力 $2.50 / 100万トークン（×150円）。flash-lite は $0.10・$0.40
+    assert t.cost_micro_jpy("gemini-2.5-flash", 1_000_000, 0) == 45_000_000
+    assert t.cost_micro_jpy("gemini-2.5-flash", 0, 1_000_000) == 375_000_000
+    assert t.cost_micro_jpy("gemini-2.5-flash-lite", 1_000_000, 1_000_000) == 75_000_000
+    assert t.cost_micro_jpy("gemini-2.5-flash", 1000, 200) < t.cost_micro_jpy("unregistered-model", 1000, 200)
 
 
 def test_reservation_covers_the_worst_case_run():

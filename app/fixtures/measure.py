@@ -6,7 +6,7 @@
 出力は Markdown の表と JSON（標準出力）。結果は測ったとおりに出す（良く見せる処理は入れない）:
   * オフラインの行は、モデルを呼ばない。トークンと費用は「台本のモデルが数えた見積もり」で、実測ではない（tokens_source=estimated）。
     RulePlanner は「案内ページを辿る Planner」を規則で再現したもので、実際の Planner（Gemini）の結果ではない。
-  * --live の行は、実モデルの usage から数えた値（tokens_source=measured）。費用は暫定の料金表（config.PRICE_TABLE）による推定。
+  * --live の行は、実モデルの usage から数えた値（tokens_source=measured）。費用は料金表（config.PRICE_TABLE。確認日と出典はそこ）による推定。
   * --live は呼び出し回数の上限をコードで持つ（既定 MAX_LIVE_CALLS_DEFAULT・上限 MAX_LIVE_CALLS_HARD）。再試行も1回と数える。
     上限に達した後の行は実行せず「skipped」と出す（途中で達した行は capped と出す）。
   * 行の順序は、案内ページの変種（g1found・g2missing）→ 既存の6変種。上限が小さい時に、差が出る変種から測れるようにするため。
@@ -218,7 +218,7 @@ def to_markdown(table: dict[str, Any]) -> str:
             f"確認不能 {x['unverifiable']}・トークン {x['tokens_in']:,}/{x['tokens_out']:,}・推定 {x['est_cost_jpy']:.4f} 円"
         )
     if table["live"]:
-        lines.append(f"- 実モデルの呼び出し: {table['calls_used']} / 上限 {table['calls_limit']} 回。費用は暫定の料金表による推定")
+        lines.append(f"- 実モデルの呼び出し: {table['calls_used']} / 上限 {table['calls_limit']} 回。費用は料金表（config.PRICE_TABLE）による推定")
     else:
         lines.append(
             "- オフライン: モデルを呼んでいません。* は台本のモデルが数えた見積もりで、実測ではありません。"

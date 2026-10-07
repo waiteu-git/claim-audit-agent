@@ -87,7 +87,7 @@ class ModelPrice(BaseModel):
 
 
 class PriceTable(BaseModel):
-    """単価表。checked_on が None の間は暫定値（公式価格表を人間が確認していない）。"""
+    """単価表。checked_on が None の間は暫定値（公式価格表を確認していない）。models に無いモデルは default（安全側）で見積もる。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -116,12 +116,19 @@ class PriceTable(BaseModel):
         return tokens_in * p.input_jpy_per_mtok + tokens_out * p.output_jpy_per_mtok
 
 
-# 暫定値＝入力 $1/M・出力 $5/M を ¥150/$ で換算。10/3 に公式価格表を確認して checked_on を入れる。
-# 公式×1.5 が暫定値を上回るなら RESERVATION_MICRO_JPY（予約額）を上げる。
+# 公式の料金ページ（Vertex AI・Standard・入力20万トークン以下）を 2026-10-08 に確認した:
+#   gemini-2.5-flash       入力 $0.30 / 100万トークン・出力（回答と推論） $2.50 → ¥150/$ で 45 / 375
+#   gemini-2.5-flash-lite  入力 $0.10 / 100万トークン・出力（回答と推論） $0.40 → ¥150/$ で 15 / 60
+# 為替 ¥150/$ は概算の固定値（実際の請求の円換算とは一致しない）。default は、登録していないモデルを安全側
+# （入力 $1/M・出力 $5/M 相当）で見積もるための暫定値で、予約額 RESERVATION_MICRO_JPY もこの default で最悪値を測る。
 PRICE_TABLE = PriceTable(
-    checked_on=None,
-    source="暫定: 設計書 §6-1（入力約$1/M・出力約$5/M を ¥150/$ で換算）。公式価格表は未確認",
+    checked_on="2026-10-08",
+    source="Vertex AI の公式料金ページ（Standard・入力20万トークン以下）。為替は ¥150/$ の概算の固定値。未登録のモデルは default（安全側の暫定値）",
     default=ModelPrice(input_jpy_per_mtok=150, output_jpy_per_mtok=750),
+    models={
+        "gemini-2.5-flash": ModelPrice(input_jpy_per_mtok=45, output_jpy_per_mtok=375),
+        "gemini-2.5-flash-lite": ModelPrice(input_jpy_per_mtok=15, output_jpy_per_mtok=60),
+    },
 )
 
 # 最悪の1実行（入力9万＋出力1.4万）の約¥24 を丸めた予約額 ¥25（§6-1）
