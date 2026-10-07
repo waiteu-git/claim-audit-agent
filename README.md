@@ -1,50 +1,99 @@
-# claim-audit-agent
+# claim-audit-agent（要項監査エージェント）
 
-要項・規約・FAQ を読み、要件を「原文引用＋出典＋種別」で構造化し、提出物を実際に検査して証拠つきで合否を返す、読み取り専用のエージェント。
-（Agentic AI Hackathon with Google Cloud 提出作品。開発中）
+一般の募集要項・規約・FAQ を読み、要件を「原文の引用」と「推測」に分けて構造化し、提出物を実際に検査して、証拠つきで合否を返す**読み取り専用**のエージェントです。
 
-## 現状（Gate1）
-Cloud Run 上の最小サービス（`/health`・`/probe`）が Vertex AI の Gemini を呼べる。呼び出し上限とキルスイッチは最初から入れてある。
+- 要件は、原文の1文を**逐語照合できたもの**だけを「引用つきの要件」として扱います。照合できなかったものは推測に落とし、画面でも区別して出します。
+- 提出物には HTTP での到達検査・ログイン壁の検出・字数の計測・漏洩の走査などを、決まった手順（コード）で当てます。
+- 適合・不適合などの**判定は、観測からコード（`app/adjudicate.py`）だけが決めます**。モデルは判定を書けません。証拠が無いものは「確認不能」（理由コードつき）になります。
+- 提出物にも要項にも書き込みません。外向きは GET/HEAD 相当の取得だけです。
 
-- 認証: Cloud Run は `--no-allow-unauthenticated`（IAM 認証必須）。API キーは使わず、専用サービスアカウントの `roles/aiplatform.user` のみ。
-- 上限: インスタンス数 `--max-instances=2`・同時実行 8・出力トークン `MAX_OUTPUT_TOKENS`・インスタンス単位の毎時呼び出し上限 `MAX_LLM_CALLS_PER_HOUR`。
-- 注意: Cloud Run は `/healthz` を予約している（前段が 404 を返す）ため、ヘルスチェックは `/health`。
+## 経緯（新規作成の時期）
 
-## 運用コマンド
+このリポジトリは、**ハッカソンの参加登録の後に新規作成**しました。初回コミットは `9ed0053`（2026-10-02 17:10:58 JST）で、`git log` で確認できます。
+これより前の履歴はなく、以下の `app/` 配下はこの初回コミット以降に積んだものです。
+
+## 今回開発した範囲（`app/` 配下）
+
+配置と import の向きの正典は `app/__init__.py` の docstring です（循環・逆向きの import は `tests/test_repo_hygiene.py` が止めます）。
+
+| 場所 | 役割 |
+|---|---|
+| `contracts.py` | 共有の型（pydantic）。モデルの出力・観測・判定・実行記録の契約 |
+| `config.py` | 実行ごとの上限（RUN_CAPS）・プリセット・料金表・環境変数の読み込み（環境変数を読むのはここだけ） |
+| `errors.py` / `jsonlog.py` / `textsafe.py` | エラー分類と公開してよい文言／構造化ログ／可視テキストの安全判定 |
+| `net/` | SafeFetch。外向き HTTP の唯一の出口（SSRF 遮断・リダイレクト・受信量の上限） |
+| `ingest/` | 取得物（非信頼の HTML 等）を可視テキストへ洗浄。隠しテキストの分離と、偽の命令（プロンプトインジェクション）の検知 |
+| `quotes/` | **引用の逐語照合**。モデルの引用を原文に当て、一致したものだけに「検証済み」の印を発行する |
+| `checks/` | 決定論の検査（到達検査・ログイン壁・字数・実行環境の署名・漏洩の走査 ほか）。ネットワークもモデルも使わない |
+| `adjudicate.py` | 判定表（要件×観測→判定）と、要項間の矛盾の検出。判定を書ける唯一の場所 |
+| `model/` | モデル呼び出しの抽象（本番用の Gemini・台本で動くテスト用・再試行・記録再生） |
+| `agent/` | Reader（ツール無しの読み取り）・Planner（関数呼び出しで検査を進める司令役）・router（モデル無しの決定論版）・Governor（許可・上限・停止）・予算・ツール・トレース・実行・出力 |
+| `quota.py` / `state_firestore.py` / `egress_guard.py` | 利用枠（予約→精算）・審査員コード・匿名枠・全パス共通の上限 |
+| `fixtures/` | 検査の評価に使う架空のサンプル（欠陥入り・偽の命令入り）。実在の主催者・参加者とは無関係 |
+| `web/` | 公開面（ASGI）・静的 UI・同梱の実行記録（REPLAY） |
+| `cli.py` / `main.py` | ローカル実行 CLI／疎通確認用の最小サービス（初回コミットの名残） |
+
+**引用の逐語照合（`app/quotes`）は、このハッカソンの作業中に新規に書いたものです。** 既存ライブラリは使っていません。
+
+## パッケージ化した部分（依存 OSS）
+
+本番イメージに入るのは `requirements.txt` の9個、テスト専用が `requirements-dev.txt` の5個です。すべて版を固定しています。
+ライセンス名は、固定した版をインストールしたときのパッケージのメタデータに書かれていた表記です（自分で推測したものではありません）。
+全文は各パッケージの配布物で確認してください。推移的な依存のライセンスはここでは一覧していません（**要確認**）。
+
+本番（`requirements.txt`）:
+
+| パッケージ | 版 | ライセンス（メタデータの表記） |
+|---|---|---|
+| fastapi | 0.142.2 | MIT |
+| uvicorn | 0.54.0 | BSD-3-Clause |
+| google-genai | 2.27.0 | Apache-2.0 |
+| google-cloud-firestore | 2.34.0 | Apache-2.0 |
+| pydantic | 2.13.5 | MIT |
+| httpcore | 1.0.9 | BSD-3-Clause |
+| h11 | 0.16.0 | MIT |
+| anyio | 4.15.1 | MIT |
+| certifi | 2026.7.22 | MPL-2.0 |
+
+テスト専用（`requirements-dev.txt`。本番イメージには入れません）:
+
+| パッケージ | 版 | ライセンス（メタデータの表記） |
+|---|---|---|
+| pytest | 9.1.1 | MIT |
+| pytest-asyncio | 1.4.0 | Apache-2.0 |
+| cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause |
+| idna | 3.20 | BSD-3-Clause |
+| httpx | 0.28.1 | BSD-3-Clause |
+
+モデルは Google Cloud の Vertex AI 上の Gemini を、サービスアカウントの権限（ADC）で呼びます。API キーは使いません。
+
+## 統制（暴走・乗っ取りを抑える仕組み）
+
+- **許可リスト**: 取得してよい先は、プリセットで固定した URL の接頭辞だけ。公開面の入力はプリセット ID だけで、任意の URL は受けません。Planner は URL を渡せず、リンク表の ID だけで指します。
+- **ツールは5本だけ**: `fetch_link`・`http_probe`・`run_check`・`mark_unverifiable`・`finish`。モデルが出した関数呼び出しは、1つずつ Governor が許可／拒否します（拒否は必ず理由コードとともにトレースへ残ります）。
+- **上限**: モデル呼び出し数・トークン・ツール呼び出し数・取得数・第三者ホスト数・要件ごとの回数・壁時計・拒否の連続回数に上限があり、到達すると理由つきで部分結果を返して止まります。
+- **SSRF 遮断**: 外向き HTTP は SafeFetch だけ。私的・予約済みアドレス、リダイレクト先の再検査、受信量とヘッダの上限、接続先のピン留めを行います。
+- **注入の扱い**: 取得物は非信頼として洗浄し、偽の命令の疑いのある区間は読み取りモデルへ渡す前に伏せます。提出物の隠しテキストはどのモデルにも渡しません。Planner が見るのは ID・種別・数値だけの状態（自由文を持たない型）です。
+- **判定はコードが出す**: 判定を書けるのは `app/adjudicate.py` だけ。「検証済み」の印を発行できるのは `app/quotes` だけです（どちらもテストで固定しています）。
+- **キルスイッチ**: 環境変数 `KILL_SWITCH=1` で、実行中も含めて全モデル呼び出しを止めます。
+- **REPLAY 降格**: キルスイッチ・枠切れ・停止中・保存先の障害のときは、ライブ実行をせず同梱の実行記録の再生に落とします（画面にも REPLAY と理由を表示）。
+- **同梱の記録は原文を短くして持つ**: 実行記録を同梱するときは、引用などの原文の断片を1件80字までに切り詰め（`quote_clipped`）、要件は40件までにします。同梱の記録は原文を持たないため、再生時に引用の再検証はせず、「保存時に検証済み」と表示します。
+
+## テストの実行（完全オフライン）
+
 ```bash
-# キルスイッチ ON（全モデル呼び出しが 503 になる）／ OFF
-gcloud run services update claim-audit-agent --project=<PROJECT> --region=asia-northeast1 --update-env-vars=KILL_SWITCH=1
-gcloud run services update claim-audit-agent --project=<PROJECT> --region=asia-northeast1 --remove-env-vars=KILL_SWITCH
+pip install -r requirements-dev.txt
+python -m pytest
 ```
 
-## 第2弾 G2（Reader → 検査 → 判定 → 出力の縦1本。オフラインでテスト可能な範囲）
+外向き通信は `tests/conftest.py` が遮断します。モデルは台本（`ScriptedPort`）、取得は偽の `FetchPort` で置き換えており、Vertex・gcloud・Firestore の実物は使いません。
+動作確認は Python 3.13（`Dockerfile` と同じ）で行います。`xfail` が数件あります（`tests/test_sanitize_adversarial.py` の既知の残り＝HTML 解析の近似の限界）。
 
-- `app/agent/`: `reader`（ツール無し・構造化出力・引用の再検証）／`governor`・`budget`・`tools`・`trace`（上限・許可リスト・重複検知・停止条件・JSONL）／
-  `planner`（手動 function calling の Planner ループと、LLM 無しの決定論 `router`）／`acquire`・`run`・`report`。
-- ローカル実行: `python -m app.cli <preset> [--inspect-mode planner|router] [--format json|html] [--out PATH] [--trace PATH]`
-  （プリセット ID だけを受ける。取得は SafeFetch、モデルは Vertex の Gemini＝`GOOGLE_CLOUD_PROJECT` が要る。テストはフェイクを注入）。
-- 判定（Verdict）を書けるのは `app/adjudicate.py` だけ。`tests/test_agent_run.py` が AST で固定する。
+## ローカルでの実行
 
-## 第3弾（公開面と UI・フィクスチャ。オフラインでテスト可能な範囲）
+- 公開面: `python -m app.web`（`ROLE=fetcher` なら fetcher）。`LIVE_ENABLED=1` でライブ実行、無ければ同梱の REPLAY を返します。
+- CLI: `python -m app.cli <preset> [--inspect-mode planner|router] [--format json|html]`（実モデルの呼び出しには Google Cloud の認証設定が要ります）。
+- 架空フィクスチャ: `python -m app.fixtures.gen --check`、評価は `python -m app.fixtures.eval`（モデル不使用）。
+- 実行記録の取り込み: `python -m app.web.replay --import rec.json --preset <id>`（漏洩の走査・原文の切り詰め・契約の検証を通ったものだけ）。
 
-- 公開面 S2: `python -m app.web`（`ROLE=fetcher` なら S3 の fetcher）。`/health`・静的 UI（`/`・`/app.js`・`/app.css`）・`/fx/*`（架空フィクスチャ）・
-  `GET /api/status`・`POST /api/run`（プリセット ID だけ。SSE）。`/probe` は持たない（S1 専用）。ライブを開けるのは
-  `LIVE_ENABLED=1` かつキルスイッチ無し、かつ枠（`app/quota.py`）が残っている時だけで、それ以外は同梱の REPLAY（`app/web/replay/`）。
-- フィクスチャ: `app/fixtures/`（架空の「みらいアプリ杯」要項2ページ・提出物3ページ。欠陥 D1〜D4・注入版）。
-  `python -m app.fixtures.gen --check`／`--write`、評価は `python -m app.fixtures.eval`（実 LLM 無し・OracleReader＋router）。
-- 同梱の REPLAY は OracleReader（台本）で作った記録（`reader_model` が `oracle-reader`）。実 Gemini の記録へ置き換えるのは
-  `python -m app.web.replay --import rec.json --preset <id>`（漏洩の走査と契約の検証を通ったものだけ）。
-- 新しい環境変数: `PORT`・`STATE_BACKEND`（memory|firestore。ENV=public では firestore 必須）・`JUDGE_CODE_SHA256`（審査員コードの sha256。コードそのものは置かない）。
-
-## 開発
-
-- 配置・依存の向きは `app/__init__.py` の docstring が正典（共有の型は `app/contracts.py`、設定と環境変数は `app/config.py`）。
-- テスト（完全オフライン。外向き通信は `tests/conftest.py` が遮断する）: `pip install -r requirements-dev.txt && python -m pytest`
-  - 単体・敵対（モジュールごと）に加えて、`tests/test_integration_*.py`（実モジュールを通しでつなぐ・別実装の食い違い）と
-    `tests/test_repo_hygiene.py`（依存の固定・本番イメージの中身・import の向き・S1 が無傷）がある。
-  - `xfail` が4件ある（`tests/test_sanitize_adversarial.py` の既知の残り＝HTML 解析の近似の限界。ブラウザでは隠れる文字が可視に残る最小再現）。
-- 依存は版を固定する。本番は `requirements.txt`、テスト専用（pytest・cryptography・idna）は `requirements-dev.txt`。
-  本番イメージ（Dockerfile）は `requirements.txt` と `app/` だけを入れる。
-- デプロイは 3.13（Dockerfile）。ローカルが 3.14 でも通るだけでは足りないので、`tests/test_py313_safety.py` が注釈の遅延評価依存などを検査する。
-- `deploy.sh` は既定で表示だけ（`--apply` で初めて gcloud を呼ぶ）。allUsers は付けない。
-- Vertex の実測（手動・最大8回）: `GOOGLE_CLOUD_PROJECT=<id> python -m ops.measure_gemini --yes`。結果は `app/model/gemini.py` の docstring へ書き戻す。
+デプロイの手順は `deploy.sh`（既定は表示だけ。`--apply` で初めて実行）にあります。URL や設定値はこのリポジトリには書きません。
