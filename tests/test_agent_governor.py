@@ -468,3 +468,17 @@ def test_every_deny_event_in_a_noisy_session_carries_policy_and_reason():
         gov.denial_streak = 0
     ev = [e for e in gov.trace.events if e.decision is Decision.DENY]
     assert len(ev) == gov.denied == 4 and all(e.policy_id and e.reason_code for e in ev)
+
+
+# ---- 決めることが残っているか（Planner を呼ぶかどうか。10/7 の実測から） ----------------------------------------
+def test_decisions_remain_while_a_check_is_untouched_and_not_after_all_checks_ran():
+    state, gov = world()
+    assert gov.pending_checks() == ["R1", "R2"] and gov.decisions_remain() is True  # 未着手の検査がある
+    turn(gov)
+    assert gov.admit(fc("run_check", checker="text_length", req_id="R1")).allowed
+    state.probed_targets.add("SUBMISSION_URL")  # auth_wall は probe が先（実際は http_probe の実行で観測が増える）
+    state.observations.append(probe_obs(obs_id="O1"))
+    assert gov.decisions_remain() is True  # R2 がまだ
+    assert gov.admit(fc("run_check", checker="auth_wall", req_id="R2")).allowed
+    assert gov.pending_checks() == []
+    assert gov.decisions_remain() is False  # 残りの要件（R3＝手段なし）は判定表（コード）が決める。Planner の出番は無い

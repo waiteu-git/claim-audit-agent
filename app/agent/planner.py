@@ -26,6 +26,7 @@ from app.contracts import (
     AbortReason,
     Actor,
     CheckClass,
+    Checker,
     DegradedReason,
     DocFeatures,
     FeatureCategory,
@@ -58,7 +59,8 @@ MAX_CALLS_PER_TURN = 4  # 1ターンで処理する関数呼び出しの数。�
 PLANNER_SYSTEM = (
     "あなたは、提出物の検査を進める司令役です。入力は状態の JSON だけで、文書の本文も要件の文章も見えません"
     "（ID・種別・件数・予算だけ）。allowed_tools の関数だけを呼んでください。\n"
-    "- requirements の routes は検査の手順の候補です。state が open の要件から進めてください。\n"
+    "- requirements の routes は次の1手の候補です。state が open の要件から進めてください。"
+    "fetch_link:Lx があるなら、その検査は今ある文書では不確定なので、リンク Lx を辿ってからやり直します。\n"
     "- 検査できる要件にひとつも着手していない間は finish できません。\n"
     "- 判定（適合・不適合）は書きません。判定は観測からコードが決めます。\n"
     "- mark_unverifiable の reason_code は宣言に列挙された値だけです（NO_EVIDENCE・BUDGET などはコードが付けます）。"
@@ -103,7 +105,7 @@ def compute_features(doc: SanitizedDoc, state: RunState) -> DocFeatures:
     )
 
 
-def routes_for(state: RunState, req: VerifiedRequirement) -> tuple[str, ...]:
+def routes_for(state: RunState, req: VerifiedRequirement, *, links_left: bool = True) -> tuple[str, ...]:
     """要件の検査の手順の候補（code が表から決める。Planner はこの中から選ぶ）。検査できない要件は空。"""
     if not state.can_run_check(req):
         return ()
@@ -111,6 +113,12 @@ def routes_for(state: RunState, req: VerifiedRequirement) -> tuple[str, ...]:
     assert checker is not None
     if state.needs_probe_first(req):  # probe が済むまで run_check は手順に出さない（出すと probe を飛ばして ERROR になる）
         return ("http_probe:SUBMISSION_URL",)
+    if checker is Checker.CONTAINS_TERMS and state.check_observations(req.req_id) and state.next_terms_doc(req.req_id) is None:
+        # 今ある提出物の文書をすべて調べ終えて、不確定だった。同じ検査を繰り返しても同じ（重複で拒否される）ので、次の手は
+        # 案内ページらしいリンクを辿ること（方針変更）。辿れる予算とリンクが無ければ、手は無い（残りは判定表が決める）。
+        # 10/7 の実測: この手順が出ず、Planner が同じ run_check を3回繰り返して劣化した。
+        link = state.unfollowed_docs_link() if links_left else None
+        return (f"fetch_link:{link}",) if link else ()
     return (f"run_check:{checker.value}",)
 
 
@@ -133,7 +141,7 @@ def build_state_view(state: RunState, gov: Governor, turn: int, max_turns: int, 
                 kind=r.kind,
                 check_class=r.check_class,
                 state=state.req_state(r),
-                routes=routes_for(state, r),
+                routes=routes_for(state, r, links_left=gov.links_left()),
                 calls_used=min(3, state.calls_used(r.req_id)),
             )
             for r in state.requirements
@@ -206,11 +214,30 @@ def build_state_view(state: RunState, gov: Governor, turn: int, max_turns: int, 
 
 
 # ---- Planner ループ ----------------------------------------------------------------------------------
-async def run_planner(state: RunState, gov: Governor, registry: ToolRegistry, model: ModelPort) -> None:
-    """INSPECT。最大 planner_max_turns ターン。終わり方は finish・停止条件（Governor.check_stop）・ターン切れのどれか。"""
+async def _finish_without_model(gov: Governor, registry: ToolRegistry, turn: int) -> None:
+    """AUTORUN で決まり、Planner が決められることが残っていない（Governor.decisions_remain）。モデルを呼ばず、router と同じ finish で終える。
+    トレースには、Planner を呼ばなかったこととその理由を残す（画面で「AUTORUN で決まったので Planner の出番は無かった」と説明できる）。"""
+    gov.trace.emit(gov.phase, Actor.GOVERNOR, TraceType.AUTORUN, name="planner_skipped", attrs={"reason": "no_decisions_left"})
+    gov.begin_turn(turn, gov.meter.caps.planner_max_turns, gov.allowed_tools())
+    adm = gov.admit(ToolCall(name=ToolName.FINISH, args=FinishArgs()))
+    if adm.allowed:
+        await registry.execute(adm)
+    gov.snapshot()
+
+
+async def run_planner(
+    state: RunState, gov: Governor, registry: ToolRegistry, model: ModelPort, *, skip_when_idle: bool = True
+) -> None:
+    """INSPECT。最大 planner_max_turns ターン。終わり方は finish・停止条件（Governor.check_stop）・ターン切れのどれか。
+
+    skip_when_idle=True（本番の既定）: 決められることが残っていない（Governor.decisions_remain が偽）なら、モデルを呼ばずに終える。
+    False は「残っていなくても必ずモデルを呼ぶ」＝乗っ取られた・暴走した Planner への Governor の拒否を検査するテスト用。"""
     caps = gov.meter.caps
     for turn in range(1, caps.planner_max_turns + 1):
         if gov.check_stop():
+            return
+        if skip_when_idle and not gov.decisions_remain():
+            await _finish_without_model(gov, registry, turn)
             return
         allowed = gov.allowed_tools()
         gov.begin_turn(turn, caps.planner_max_turns, allowed)

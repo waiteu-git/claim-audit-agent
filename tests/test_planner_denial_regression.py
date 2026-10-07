@@ -98,7 +98,7 @@ async def test_reproduction_a_planner_repeating_a_denied_call_three_times_degrad
     state, gov, reg = setup(reqs=REQS[2:])  # 検査の種類が無い要件だけ
     bad = ("mark_unverifiable", {"req_id": "R1", "reason_code": "NO_EVIDENCE"})
     port = ScriptedPort([reply_calls(bad)] * 3)
-    await run_planner(state, gov, reg, port)
+    await run_planner(state, gov, reg, port, skip_when_idle=False)
     assert (gov.status, gov.degraded_reason) == (RunStatus.DEGRADED, DegradedReason.DENIAL_STREAK)
     assert denials(gov) == [(PolicyId.UNVERIF, "CODE_ONLY"), (PolicyId.DUP, "REPEATED_DENIAL"), (PolicyId.DUP, "REPEATED_DENIAL")]
     # 2ターン目以降の StateView には、直前の拒否の理由と関数名が載っている（1ターン目は無い）
@@ -119,7 +119,7 @@ async def test_after_the_fix_a_live_like_planner_is_never_denied_and_finishes_do
         live_like_marker,  # R3 に印が付いたので、もう宣言に mark_unverifiable は無い → finish
     ]
     port = ScriptedPort(steps)
-    await run_planner(state, gov, reg, port)
+    await run_planner(state, gov, reg, port, skip_when_idle=False)
     assert denials(gov) == []
     assert gov.status is RunStatus.DONE
     assert state.marks["R3"].reason_code is UnverifiableReason.HUMAN_ONLY

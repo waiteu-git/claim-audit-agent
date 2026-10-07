@@ -37,10 +37,12 @@ from app.config import PRICE_TABLE
 from app.contracts import (
     CHECK_CLASS_CHECKER,
     AbortReason,
+    Checker,
     DenialCode,
     Actor,
     Decision,
     DegradedReason,
+    DocRole,
     FetchKind,
     FunctionCall,
     Kind,
@@ -280,6 +282,27 @@ class Governor:
                 out.append(r.req_id)
         return out
 
+    def decisions_remain(self) -> bool:
+        """Planner が決められることが残っているか。残っているのは次の2つだけ。
+          * 未着手の検査（前提不足で AUTORUN が後回しにしたものを含む＝pending_checks）
+          * 不確定だった検査の要件があり、まだ調べていない提出物の文書（辿った先の案内ページ）がある、または辿る価値のある
+            案内ページ（役割 docs）が残っている（方針変更の材料）
+        どちらも無ければ、残りの要件は判定表（コード）が確認不能・参考にする。モデルを呼ばずに終える（費用0）。
+        10/7 の実測: AUTORUN が全部済ませた後も Planner が済んだ http_probe を出し続け、重複の拒否が3回続いて劣化していた。"""
+        st = self.state
+        if self.pending_checks():
+            return True
+        follow = self._links_left() and st.unfollowed_docs_link() is not None
+        for r in self._openable():
+            obs = st.check_observations(r.req_id)
+            if not (st.is_checkable(r) and obs and all(o.outcome is ObsOutcome.INCONCLUSIVE for o in obs)):
+                continue
+            if follow:
+                return True
+            if CHECK_CLASS_CHECKER[r.check_class] is Checker.CONTAINS_TERMS and st.next_terms_doc(r.req_id) is not None:
+                return True  # 辿った先の文書に、まだ contains_terms を当てていない
+        return False
+
     def _openable(self) -> list:
         return [r for r in self.state.requirements if self.state.req_state(r) is ReqState.OPEN]
 
@@ -290,6 +313,10 @@ class Governor:
         if st.preset.submission_url and "SUBMISSION_URL" not in st.probed_targets:
             return True
         return any(r.entry.in_scope and r.entry.role is not LinkRole.LOGIN and gid not in st.probed_targets for gid, r in st.links.items())
+
+    def links_left(self) -> bool:
+        """fetch_link の予算が残り、辿れるリンクがあるか（Planner に見せる手順に fetch_link を出してよいか）。"""
+        return self._links_left()
 
     def _links_left(self) -> bool:
         st, b = self.state, self.meter.budget

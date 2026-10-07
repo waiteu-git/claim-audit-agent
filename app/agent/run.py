@@ -89,6 +89,7 @@ async def run_audit(
     sleep: "Callable[[float], Awaitable[None]] | None" = None,
     started_at: datetime | None = None,
     trace_sink: Callable[[TraceEvent], None] | None = None,
+    planner_skip_when_idle: bool = True,
 ) -> RunResult:
     if inspect_mode is InspectMode.PLANNER and planner_model is None:
         raise ValueError("inspect_mode=planner には planner_model が要ります")
@@ -160,7 +161,7 @@ async def run_audit(
             await run_router(state, gov, registry)
         else:
             assert planner_model is not None
-            await run_planner(state, gov, registry, planner_model)
+            await run_planner(state, gov, registry, planner_model, skip_when_idle=planner_skip_when_idle)
     if gov.status is RunStatus.ABORTED:
         return result(tuple(state.requirements), ())
 

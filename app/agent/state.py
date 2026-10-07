@@ -13,6 +13,7 @@ from app.contracts import (
     Checker,
     DocMeta,
     DocRole,
+    LinkRole,
     Kind,
     LinkEntry,
     Observation,
@@ -146,6 +147,17 @@ class RunState:
         for d in self.docs.values():
             if d.role is DocRole.SUBMISSION and d.doc_id not in done:
                 return d.doc_id
+        return None
+
+    def unfollowed_docs_link(self) -> str | None:
+        """提出物の文書にある、まだ辿っていない案内ページらしいリンクの ID（リンク表の順の先頭）。無ければ None。
+        条件: スコープ内・役割 docs（役割はコードが href のパスで付ける）。「辿っていない案内ページ」の判定はここだけ
+        （AUTORUN の後回し・Governor の「決めることが残っているか」・Planner に見せる手順が、同じ答えを使う）。"""
+        sub_ids = {d.doc_id for d in self.docs.values() if d.role is DocRole.SUBMISSION}
+        for gid, ref in self.links.items():
+            e = ref.entry
+            if ref.doc_id in sub_ids and e.in_scope and e.role is LinkRole.DOCS and gid not in self.fetched_links:
+                return gid
         return None
 
     def calls_used(self, req_id: str) -> int:

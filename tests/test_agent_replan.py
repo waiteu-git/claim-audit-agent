@@ -155,3 +155,53 @@ async def test_the_rule_planner_makes_the_same_move_as_the_script_and_the_router
     assert key_events(rule) == key_events(scripted) and [v.label for v in rule.verdicts] == [v.label for v in scripted.verdicts]
     assert (rrow["false_absent"], orow["false_absent"]) == (0, 1)  # 辿る Planner は誤った absent を出さず、辿らない router は出す
     assert not [e for e in router.events if e.type is TraceType.REPLAN]
+
+
+# ---- 手順（routes）に従うだけの Planner で、方針変更の場面が完走する（10/7 の実測から） -------------------------------------
+def route_follower():
+    """StateView の routes の先頭だけに従う台本。実 Gemini は、不確定の後に手順が更新されないと同じ run_check を繰り返した
+    （重複で3回拒否されて劣化）。手順が「次の1手」を出していれば、モデルの賢さに依らず完走することを固定する。"""
+    import json
+
+    def follow(req):
+        view = json.loads(req.contents)
+        for r in view["requirements"]:
+            if r["state"] != "open":
+                continue
+            for route in r["routes"]:
+                tool, _, arg = route.partition(":")
+                if tool not in view["allowed_tools"]:
+                    continue
+                if tool == "fetch_link":
+                    return reply_calls(("fetch_link", {"link_id": arg, "reason": "案内ページを辿る"}))
+                if tool == "run_check":
+                    return reply_calls(("run_check", {"checker": arg, "req_id": r["req_id"]}))
+                if tool == "http_probe":
+                    return reply_calls(("http_probe", {"target": arg, "reason": "到達検査"}))
+        return reply_calls(("finish", {}))
+
+    return follow
+
+
+async def test_a_route_following_planner_follows_the_guide_page_when_the_first_check_is_inconclusive():
+    res = await go(
+        InspectMode.PLANNER, planner=ScriptedPort([route_follower()] * 8), fetch=guide_fetch(guide_page=GUIDE_PAGE_WITH_ACCOUNT), reader=guide_reader()
+    )
+    assert res.record.status is C.RunStatus.DONE and res.record.summary.denied == 0  # 重複の拒否も劣化も無い
+    views = [e.state_view for e in res.events if e.type is TraceType.STATE_VIEW]
+    r3 = [next(q for q in v.requirements if q.req_id == "R3").routes for v in views]
+    assert r3[0] == ("run_check:contains_terms",)  # 最初は検査
+    assert r3[1] == ("fetch_link:L1",)  # 不確定（今ある文書は調べ尽くした）→ 次の手は案内ページを辿ること
+    assert r3[2] == ("run_check:contains_terms",)  # 辿った先の文書は未検査 → 検査
+    assert any(e.type is TraceType.REPLAN for e in res.events)  # 方針変更の印（コードが付ける）
+    assert verdicts(res)["R3"].label is VerdictLabel.PRESUMED_PASS  # 案内ページに在った
+
+
+async def test_a_route_following_planner_confirms_the_absence_when_the_guide_page_has_none_either():
+    res = await go(
+        InspectMode.PLANNER, planner=ScriptedPort([route_follower()] * 8), fetch=guide_fetch(guide_page=GUIDE_PAGE_WITHOUT_ACCOUNT), reader=guide_reader()
+    )
+    assert res.record.status is C.RunStatus.DONE and res.record.summary.denied == 0
+    assert verdicts(res)["R3"].label is VerdictLabel.FAIL  # 辿った先にも無い → 「無い」を確定して不適合
+    # 調べ尽くして辿れるリンクも無い: 手順は空になり、Planner を呼ばずに終える（これ以上の手が無い）
+    assert any(e.type is TraceType.AUTORUN and e.name == "planner_skipped" for e in res.events)

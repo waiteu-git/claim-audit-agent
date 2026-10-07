@@ -19,15 +19,8 @@ AUTORUN_RESERVE_CALLS = 4
 
 
 def unfollowed_docs_links(state: RunState) -> bool:
-    """提出物の文書に、まだ辿っていない案内ページらしいリンク（スコープ内・役割 docs。役割はコードが href のパスで付ける）があるか。"""
-    sub_ids = {d.doc_id for d in state.docs.values() if d.role is DocRole.SUBMISSION}
-    for gid, ref in state.links.items():
-        e = ref.entry
-        if ref.doc_id not in sub_ids or not e.in_scope or gid in state.fetched_links:
-            continue
-        if e.role is LinkRole.DOCS:
-            return True
-    return False
+    """提出物の文書に、まだ辿っていない案内ページらしいリンクがあるか（判定は RunState.unfollowed_docs_link の1か所）。"""
+    return state.unfollowed_docs_link() is not None
 
 
 def _record_reader_proposals(state: RunState, gov: Governor, proposals: dict[str, PageClass]) -> None:

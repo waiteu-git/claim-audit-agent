@@ -153,7 +153,7 @@ def test_unread_spec_documents_show_as_truncated_to_the_planner():
 async def test_scripted_planner_runs_the_inspection_to_the_end():
     state, gov, reg = setup()
     port = standard_planner()
-    await run_planner(state, gov, reg, port)
+    await run_planner(state, gov, reg, port, skip_when_idle=False)
     assert gov.status is RunStatus.DONE and port.remaining == 0
     assert {o.req_id for o in state.observations if o.req_id} == {"R1", "R2"}
     assert [o.code for o in state.observations] == [ObsCode.AUTH_WALL, ObsCode.AUTH_WALL, ObsCode.OVER_LIMIT]
@@ -177,7 +177,7 @@ async def test_planner_request_exposes_only_the_allowed_tools_and_the_state_view
 async def test_state_view_is_traced_every_turn_and_the_last_observation_feeds_the_next_view():
     state, gov, reg = setup()
     port = standard_planner()
-    await run_planner(state, gov, reg, port)
+    await run_planner(state, gov, reg, port, skip_when_idle=False)
     views = [e.state_view for e in gov.trace.events if e.type is TraceType.STATE_VIEW]
     assert [v.turn for v in views] == [1, 2, 3, 4]
     assert [v.last_observation for v in views] == [None, ObsCode.AUTH_WALL, ObsCode.AUTH_WALL, ObsCode.OVER_LIMIT]
@@ -194,7 +194,7 @@ async def test_the_planner_sees_each_turn_only_what_the_code_rebuilds_no_history
 
 async def test_planner_model_calls_are_charged_to_the_planner_budget():
     state, gov, reg = setup()
-    await run_planner(state, gov, reg, standard_planner())
+    await run_planner(state, gov, reg, standard_planner(), skip_when_idle=False)
     b = gov.meter.budget
     assert b.planner_calls == 4 and b.reader_calls == 0
     assert [e.purpose for e in gov.trace.events if e.type is TraceType.MODEL_CALL] == [ModelPurpose.PLANNER] * 4

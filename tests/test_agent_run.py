@@ -258,7 +258,7 @@ async def test_a_planner_cannot_wash_a_failure_by_marking_the_requirement_unveri
     steps = [reply_calls(("mark_unverifiable", {"req_id": "R2", "reason_code": "HUMAN_ONLY"})),  # 決着済みの要件への印は拒否
              reply_calls(("mark_unverifiable", {"req_id": "R1", "reason_code": "NO_EVIDENCE"})),  # コード専用の理由は拒否
              reply_calls(("finish", {}))]
-    res = await go(InspectMode.PLANNER, planner=ScriptedPort(steps))
+    res = await go(InspectMode.PLANNER, planner_skip_when_idle=False, planner=ScriptedPort(steps))
     v = verdicts(res)
     assert v["R1"].label is L.FAIL and v["R2"].label is L.FAIL
     assert res.record.summary.denied == 2 and not res.governor.state.marks
@@ -282,7 +282,7 @@ async def test_a_valid_planner_mark_on_a_non_checkable_requirement_is_reported_w
                                       raw(LANG_SENTENCE, Kind.REQUIRED, CheckClass.NONE)))
     steps = [reply_calls(("mark_unverifiable", {"req_id": "R3", "reason_code": "NEEDS_AUTH"})),  # 前提の観測は AUTORUN の probe
              reply_calls(("finish", {}))]
-    res = await go(InspectMode.PLANNER, planner=ScriptedPort(steps), reader=reader)
+    res = await go(InspectMode.PLANNER, planner_skip_when_idle=False, planner=ScriptedPort(steps), reader=reader)
     v = verdicts(res)
     assert v["R3"].label is L.UNVERIFIABLE and v["R3"].reason_code is UnverifiableReason.NEEDS_AUTH and v["R3"].evidence  # 前提の観測が証拠に出る
     assert v["R1"].label is L.FAIL and v["R2"].label is L.FAIL
@@ -290,7 +290,7 @@ async def test_a_valid_planner_mark_on_a_non_checkable_requirement_is_reported_w
 
 async def test_hijacked_planner_leaves_a_partial_but_truthful_report():
     steps = [reply_calls(("delete_everything", {}))] * 3 + [reply_calls(("finish", {}))]
-    res = await go(InspectMode.PLANNER, planner=ScriptedPort(steps))
+    res = await go(InspectMode.PLANNER, planner_skip_when_idle=False, planner=ScriptedPort(steps))
     rec = res.record
     assert (rec.status, rec.degraded_reason) == (RunStatus.DEGRADED, DegradedReason.DENIAL_STREAK)
     assert rec.summary.denied == 3 and len(rec.observations) == 3  # 乗っ取られても、AUTORUN の観測（probe と2つの検査）は残る
@@ -377,3 +377,19 @@ def test_record_carries_degraded_reason_only_when_degraded():
     assert record_degraded_reason(RunStatus.ABORTED, DegradedReason.DENIAL_STREAK) is None
     assert record_degraded_reason(RunStatus.DEGRADED, DegradedReason.BUDGET) is DegradedReason.BUDGET
     assert record_degraded_reason(RunStatus.DONE, None) is None
+
+
+# ---- 決めることが残っていない時は、Planner（モデル）を呼ばない（10/7 の実測から） -------------------------------------
+async def test_planner_is_not_called_when_autorun_has_decided_everything():
+    """回帰（10/7 のライブ実行）: AUTORUN が必要な検査を全部済ませた後も、Planner が済んだ http_probe を出し続け、重複の拒否が
+    3回続いて劣化していた。残りが無ければモデルを呼ばずに finish で終える（router と同じ・費用0）。台本が空なので、呼ばれたら落ちる。"""
+    from app.contracts import TraceType as T
+
+    port = ScriptedPort([], model_id="scripted-planner")
+    res = await go(InspectMode.PLANNER, planner=port)
+    assert port.requests == []  # モデルは1回も呼ばれていない
+    rec = res.record
+    assert (rec.status, rec.degraded_reason) == (RunStatus.DONE, None) and rec.summary.denied == 0
+    assert any(e.type is T.AUTORUN and e.name == "planner_skipped" for e in res.events)  # 呼ばなかった理由がトレースに残る
+    assert [e.name for e in res.events if e.type is T.TOOL_REQUEST and e.phase.value == "INSPECT"] == ["finish"]
+    assert verdicts(res)["R1"].label is L.FAIL and verdicts(res)["R2"].label is L.FAIL  # 判定は router と同じ（AUTORUN の観測から）
