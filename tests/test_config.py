@@ -15,7 +15,7 @@ def test_run_caps_match_the_design_table():
     assert (c.model_calls_reader, c.model_calls_planner, c.model_calls_spare, c.model_calls_total) == (10, 8, 4, 22)
     assert c.model_call_timeout_s == 25 and c.model_retries == 2 and c.retry_backoff_s == (1.0, 8.0)
     assert (c.tokens_in, c.tokens_out) == (90_000, 14_000)
-    assert (c.thinking_budget_reader, c.thinking_budget_planner) == (0, 512)  # Reader は 10/7 の実測で 1,024→0（app/config.py の注記）
+    assert (c.thinking_budget_reader, c.thinking_budget_planner) == (0, 0)  # Reader は 10/7 の実測で 1,024→0（app/config.py の注記）
     assert c.tool_calls == 16
     assert (c.fetches_acquire, c.fetches_fetch_link, c.fetches_probe, c.fetches_total, c.third_party_origins) == (3, 3, 2, 8, 4)
     assert (c.requirements_obligatory, c.requirements_speculative, c.requirements_optional, c.requirements_request) == (64, 8, 8, 8)

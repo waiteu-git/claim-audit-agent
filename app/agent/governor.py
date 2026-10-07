@@ -272,7 +272,7 @@ class Governor:
         """検査できる要件のうち、まだ1回も検査していない OPEN のもの（router の作業リスト・finish の関門）。"""
         out = []
         for r in self.state.requirements:
-            if self.state.is_checkable(r) and self.state.req_state(r) is ReqState.OPEN and self.state.calls_used(r.req_id) == 0:
+            if self.state.can_run_check(r) and self.state.req_state(r) is ReqState.OPEN and self.state.calls_used(r.req_id) == 0:
                 out.append(r.req_id)
         return out
 
@@ -308,7 +308,7 @@ class Governor:
             tools.append(ToolName.HTTP_PROBE)
         st = self.state
         if any(
-            st.is_checkable(r) and st.req_state(r) is ReqState.OPEN and st.calls_used(r.req_id) < self.meter.caps.tool_calls_per_requirement
+            st.can_run_check(r) and st.req_state(r) is ReqState.OPEN and st.calls_used(r.req_id) < self.meter.caps.tool_calls_per_requirement
             for r in st.requirements
         ):
             tools.append(ToolName.RUN_CHECK)

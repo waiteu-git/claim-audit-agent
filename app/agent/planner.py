@@ -47,7 +47,10 @@ from app.contracts import (
 from app.errors import ErrorCode, classify
 from app.model.port import ModelPort
 
-PLANNER_MAX_OUTPUT_TOKENS = 512  # thinking を含む。関数呼び出しだけなので小さい
+# thinking を含む出力枠。10/7 の実測では 512 のまま thinking（512）が枠を使い切り、毎回 約509トークンで止まって関数呼び出しが出なかった（NO_CALL）。
+# 採った直し: ① thinking を 0（config）② 枠を 1,024 に（関数呼び出し4件でも十分）。function_calling_config の mode=ANY と
+# allowed_function_names は GeminiPort.build_config が最初から渡している（ANY だけでは枠切れの空応答は防げないため ①② を併用）。
+PLANNER_MAX_OUTPUT_TOKENS = 1024
 MAX_CALLS_PER_TURN = 4  # 1ターンで処理する関数呼び出しの数。超えた分は黙って捨てる（予算は呼び出しごとに計上される）
 
 PLANNER_SYSTEM = (
@@ -100,7 +103,7 @@ def compute_features(doc: SanitizedDoc, state: RunState) -> DocFeatures:
 
 def routes_for(state: RunState, req: VerifiedRequirement) -> tuple[str, ...]:
     """要件の検査の手順の候補（code が表から決める。Planner はこの中から選ぶ）。検査できない要件は空。"""
-    if not state.is_checkable(req):
+    if not state.can_run_check(req):
         return ()
     checker = CHECK_CLASS_CHECKER[req.check_class]
     assert checker is not None

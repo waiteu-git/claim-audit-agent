@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from app.checks.class_screen import quote_supports_class
 from app.contracts import (
     CHECK_CLASS_CHECKER,
+    CheckClass,
     DocMeta,
     DocRole,
     Kind,
@@ -119,6 +120,15 @@ class RunState:
         if CHECK_CLASS_CHECKER[req.check_class] is None:
             return False
         return quote_supports_class(req.check_class, req.span.original_span)
+
+    def can_run_check(self, req: VerifiedRequirement) -> bool:
+        """今この実行で run_check が意味のある観測を返せるか。検査できる要件でも、材料（提出URL・提出物の文書）が無ければ
+        チェッカーは ERROR を返すだけなので、Planner には手順として出さない（10/7 のライブ実行: ERROR の run_check）。"""
+        if not self.is_checkable(req):
+            return False
+        if req.check_class in (CheckClass.AUTH_WALL, CheckClass.RUNTIME_SIGNATURE):
+            return bool(self.preset.submission_url)
+        return self.submission_doc_id is not None
 
     def calls_used(self, req_id: str) -> int:
         return self.req_calls.get(req_id, 0)
