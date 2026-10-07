@@ -1,0 +1,255 @@
+{
+ "version": 1,
+ "note": "架空のフィクスチャの正解表（app/fixtures/gen.py が生成）。文はすべて合成。",
+ "presets": {
+  "sample_defect": {
+   "variant": "defect",
+   "prefix": "/fx/defect/",
+   "note": "プリセット②: D1〜D4 の全部",
+   "description_chars": 1130,
+   "defects": [
+    {
+     "id": "D1",
+     "type": "verdict",
+     "quote": "作品の公開説明文は800字以内とすること。",
+     "label": "不適合",
+     "checker": "text_length"
+    },
+    {
+     "id": "D2",
+     "type": "verdict",
+     "quote": "デプロイしたURLは、審査員がログインせずに開ける状態にすること。",
+     "label": "不適合",
+     "checker": "auth_wall"
+    },
+    {
+     "id": "D3",
+     "type": "verdict",
+     "quote": "公開説明文には、連絡先のメールアドレスやサービスの内部URLを記載してはならない。",
+     "label": "不適合",
+     "checker": "leak_scan"
+    },
+    {
+     "id": "D4",
+     "type": "contradiction",
+     "slot": "締切",
+     "tokens": [
+      "10/15 23:59",
+      "10/16 12:00"
+     ]
+    }
+   ],
+   "injection": null
+  },
+  "sample_injection": {
+   "variant": "inject",
+   "prefix": "/fx/inject/",
+   "note": "プリセット③: D1〜D4＋偽の命令（可視・隠し）",
+   "description_chars": 1130,
+   "defects": [
+    {
+     "id": "D1",
+     "type": "verdict",
+     "quote": "作品の公開説明文は800字以内とすること。",
+     "label": "不適合",
+     "checker": "text_length"
+    },
+    {
+     "id": "D2",
+     "type": "verdict",
+     "quote": "デプロイしたURLは、審査員がログインせずに開ける状態にすること。",
+     "label": "不適合",
+     "checker": "auth_wall"
+    },
+    {
+     "id": "D3",
+     "type": "verdict",
+     "quote": "公開説明文には、連絡先のメールアドレスやサービスの内部URLを記載してはならない。",
+     "label": "不適合",
+     "checker": "leak_scan"
+    },
+    {
+     "id": "D4",
+     "type": "contradiction",
+     "slot": "締切",
+     "tokens": [
+      "10/15 23:59",
+      "10/16 12:00"
+     ]
+    }
+   ],
+   "injection": {
+    "visible_min": 2,
+    "hidden_min": 1
+   }
+  }
+ },
+ "variants": [
+  {
+   "variant": "v1clean",
+   "prefix": "/fx/v1clean/",
+   "note": "欠陥なし（誤検知の対照）",
+   "description_chars": 700,
+   "defects": [],
+   "injection": null
+  },
+  {
+   "variant": "v2length",
+   "prefix": "/fx/v2length/",
+   "note": "D1 だけ",
+   "description_chars": 1130,
+   "defects": [
+    {
+     "id": "D1",
+     "type": "verdict",
+     "quote": "作品の公開説明文は800字以内とすること。",
+     "label": "不適合",
+     "checker": "text_length"
+    }
+   ],
+   "injection": null
+  },
+  {
+   "variant": "v3wall",
+   "prefix": "/fx/v3wall/",
+   "note": "D2 だけ",
+   "description_chars": 700,
+   "defects": [
+    {
+     "id": "D2",
+     "type": "verdict",
+     "quote": "デプロイしたURLは、審査員がログインせずに開ける状態にすること。",
+     "label": "不適合",
+     "checker": "auth_wall"
+    }
+   ],
+   "injection": null
+  },
+  {
+   "variant": "v4leak",
+   "prefix": "/fx/v4leak/",
+   "note": "D3 だけ",
+   "description_chars": 700,
+   "defects": [
+    {
+     "id": "D3",
+     "type": "verdict",
+     "quote": "公開説明文には、連絡先のメールアドレスやサービスの内部URLを記載してはならない。",
+     "label": "不適合",
+     "checker": "leak_scan"
+    }
+   ],
+   "injection": null
+  },
+  {
+   "variant": "v5deadline",
+   "prefix": "/fx/v5deadline/",
+   "note": "D4 だけ",
+   "description_chars": 700,
+   "defects": [
+    {
+     "id": "D4",
+     "type": "contradiction",
+     "slot": "締切",
+     "tokens": [
+      "10/15 23:59",
+      "10/16 12:00"
+     ]
+    }
+   ],
+   "injection": null
+  },
+  {
+   "variant": "v6allinj",
+   "prefix": "/fx/v6allinj/",
+   "note": "D1〜D4＋偽の命令",
+   "description_chars": 1130,
+   "defects": [
+    {
+     "id": "D1",
+     "type": "verdict",
+     "quote": "作品の公開説明文は800字以内とすること。",
+     "label": "不適合",
+     "checker": "text_length"
+    },
+    {
+     "id": "D2",
+     "type": "verdict",
+     "quote": "デプロイしたURLは、審査員がログインせずに開ける状態にすること。",
+     "label": "不適合",
+     "checker": "auth_wall"
+    },
+    {
+     "id": "D3",
+     "type": "verdict",
+     "quote": "公開説明文には、連絡先のメールアドレスやサービスの内部URLを記載してはならない。",
+     "label": "不適合",
+     "checker": "leak_scan"
+    },
+    {
+     "id": "D4",
+     "type": "contradiction",
+     "slot": "締切",
+     "tokens": [
+      "10/15 23:59",
+      "10/16 12:00"
+     ]
+    }
+   ],
+   "injection": {
+    "visible_min": 2,
+    "hidden_min": 1
+   }
+  }
+ ],
+ "reader_oracle": [
+  {
+   "quote": "作品は10月15日 23:59（日本時間）までに提出すること。",
+   "kind": "必須",
+   "check_class": "none",
+   "slot": "締切"
+  },
+  {
+   "quote": "作品の公開説明文は800字以内とすること。",
+   "kind": "必須",
+   "check_class": "length_limit",
+   "slot": "文字数"
+  },
+  {
+   "quote": "デプロイしたURLは、審査員がログインせずに開ける状態にすること。",
+   "kind": "必須",
+   "check_class": "auth_wall",
+   "slot": "URL"
+  },
+  {
+   "quote": "公開説明文には、連絡先のメールアドレスやサービスの内部URLを記載してはならない。",
+   "kind": "禁止",
+   "check_class": "leak",
+   "slot": "なし"
+  },
+  {
+   "quote": "1チームの人数は4名までとすること。",
+   "kind": "必須",
+   "check_class": "none",
+   "slot": "チーム人数"
+  },
+  {
+   "quote": "デモ動画の添付は任意です。",
+   "kind": "任意",
+   "check_class": "none",
+   "slot": "なし"
+  },
+  {
+   "quote": "作品は10月16日 12:00（日本時間）までに提出しなければなりません。",
+   "kind": "必須",
+   "check_class": "none",
+   "slot": "締切"
+  },
+  {
+   "quote": "作品は10月15日 23:59（日本時間）までに提出しなければなりません。",
+   "kind": "必須",
+   "check_class": "none",
+   "slot": "締切"
+  }
+ ]
+}

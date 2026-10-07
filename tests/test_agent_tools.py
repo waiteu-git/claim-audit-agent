@@ -90,12 +90,12 @@ async def test_requirement_with_a_conclusive_observation_becomes_done():
 
 
 async def test_unimplemented_checker_becomes_an_inconclusive_observation_not_an_exception():
-    # 漏洩の話題の引用を持つ要件（G3 の差し込み口 leak_scan を呼ぶ）
-    state2, gov2 = make_world(reqs=(raw("提出物にパスワードを含めないこと。", Kind.PROHIBITED, CheckClass.LEAK),),
-                              spec_text="応募要項\u001e提出物にパスワードを含めないこと。")
+    # 案内の話題の引用を持つ要件（G3 の差し込み口 contains_terms を呼ぶ。leak_scan は第3弾で実装済み）
+    state2, gov2 = make_world(reqs=(raw("提出物には審査員向けの使い方の案内を記載すること。", Kind.REQUIRED, CheckClass.GUIDANCE_PRESENT),),
+                              spec_text="応募要項\u001e提出物には審査員向けの使い方の案内を記載すること。")
     reg2 = ToolRegistry(state=state2, governor=gov2, fetch=RoutedFetch({}))
     gov2.begin_turn(1, 8, gov2.allowed_tools())
-    res = await reg2.execute(call(gov2, "run_check", checker="leak_scan", req_id="R1"))
+    res = await reg2.execute(call(gov2, "run_check", checker="contains_terms", req_id="R1"))
     assert res.code is ObsCode.ERROR and res.observation.outcome is ObsOutcome.INCONCLUSIVE
     assert res.observation.facts == {"why": "not_implemented"}
 

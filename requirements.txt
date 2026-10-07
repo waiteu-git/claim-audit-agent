@@ -1,6 +1,8 @@
 fastapi==0.142.2
 uvicorn==0.54.0
 google-genai==2.27.0
+# 公開面の枠・予約の保存先（app/state_firestore.py。ENV=public では STATE_BACKEND=firestore が必須）
+google-cloud-firestore==2.34.0
 pydantic==2.13.5
 # app/net（SafeFetch）が直接 import する HTTP 層。google-genai 経由の推移依存に任せない:
 # 受信量・ヘッダの上限と接続のピン留めが httpcore / h11 の挙動に依存するため、版が動くと安全性の前提が変わる。

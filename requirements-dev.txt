@@ -7,3 +7,5 @@ cryptography==50.0.2
 # tests/test_safefetch_adversarial.py B7: ホストの畳み込みをブラウザ相当（UTS 46）の物差しと突き合わせる。
 # 無いと importorskip で黙ってスキップされ、検知が静かに止まる（tests/test_repo_hygiene.py が在ることを確かめる）
 idna==3.20
+# 公開面のテスト（fastapi.testclient の土台。本番では使わない）
+httpx==0.28.1

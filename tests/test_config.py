@@ -190,7 +190,7 @@ def test_lp_seeds_are_capped_at_three():
 
 # --- 起動時アサーション（§8 ⑩） -------------------------------------------------------
 def _public(**kw):
-    env = {"ENV": "public", "FETCH_MODE": "remote", **kw}
+    env = {"ENV": "public", "FETCH_MODE": "remote", "STATE_BACKEND": "firestore", "SELF_ORIGIN": "https://self.example.invalid", **kw}
     return cfg.load_settings(env), env
 
 

@@ -8,7 +8,10 @@
   GOOGLE_CLOUD_PROJECT GEMINI_LOCATION(既定 global) GEMINI_MODEL(既定 gemini-3.7-flash) GEMINI_MODEL_READER GEMINI_MODEL_PLANNER
   PROMPT_VERSION SELF_ORIGIN SUBMISSION_URL FETCHER_URL LP_SEED_URLS(カンマ区切り・最大3) LOG_LEVEL
   ALLOWED_PREFIXES（S3 の取得スコープ。`[exact:]host[/path]` のカンマ区切り）
+  PORT（既定 8080）STATE_BACKEND(memory|firestore。枠・予約の保存先) JUDGE_CODE_SHA256（審査員コードの sha256 の16進。カンマ区切り。
+  コードそのものは環境変数にも置かない）
 禁止（ENV=public で起動拒否）: GOOGLE_APPLICATION_CREDENTIALS・FAULT_* ・SCRIPTED_*（startup_violations）。
+ENV=public・ROLE=agent では STATE_BACKEND=firestore と SELF_ORIGIN が必須（インスタンスごとのメモリの枠では上限にならない）。
 """
 import os
 import sys
@@ -18,7 +21,9 @@ from enum import StrEnum
 from functools import lru_cache
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from app.contracts import (
     EnvName,
@@ -213,6 +218,11 @@ class Role(StrEnum):
     FETCHER = "fetcher"
 
 
+class StateBackend(StrEnum):
+    MEMORY = "memory"  # インスタンスのメモリ（開発・テスト）。再起動で消え、インスタンス間で共有しない
+    FIRESTORE = "firestore"  # 本番（app/state_firestore.py）
+
+
 class FetchBackend(StrEnum):
     INPROC = "inproc"  # S1: SafeFetch をプロセス内で使う（開発・Gate2）
     REMOTE = "remote"  # S2: fetcher（S3）へ ID token で
@@ -266,6 +276,9 @@ class Settings(BaseModel):
     allowed_prefixes: tuple[UrlPrefix, ...] = ()
     lp_seed_urls: tuple[HttpsUrl, ...] = Field(default=(), max_length=3)
     log_level: str = "INFO"
+    port: int = Field(default=8080, ge=1, le=65535)
+    state_backend: StateBackend = StateBackend.MEMORY
+    judge_code_sha256: tuple[Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")], ...] = Field(default=(), max_length=32)
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str]) -> "Settings":
@@ -288,6 +301,9 @@ class Settings(BaseModel):
             allowed_prefixes=parse_prefixes(e.get("ALLOWED_PREFIXES")),
             lp_seed_urls=_csv(e.get("LP_SEED_URLS")),
             log_level=(e.get("LOG_LEVEL") or "INFO").upper(),
+            port=int(e.get("PORT") or 8080),
+            state_backend=StateBackend(e.get("STATE_BACKEND") or StateBackend.MEMORY.value),
+            judge_code_sha256=tuple(x.lower() for x in _csv(e.get("JUDGE_CODE_SHA256"))),
         )
 
 
@@ -313,9 +329,22 @@ PRESET_IDS: tuple[PresetId, ...] = (PRESET_LP_SELF, PRESET_SAMPLE_DEFECT, PRESET
 PLACEHOLDER_LP = "https://lp.example.invalid"
 PLACEHOLDER_SELF = "https://self.example.invalid"
 
-# ②③のフィクスチャの配信パス（T12 が実体を置く。ここは合意の置き場所＝後工程で合わせる）
+# ②③のフィクスチャの配信パス（実体は app/fixtures/site/。公開面が /fx/ で配る）。
+#   spec/ と faq/ が要項（2ページ）、submission/ が提出物の説明ページ、app/ がデプロイURL（②③では 302 → login/）
 FIXTURE_DEFECT_PREFIX = "/fx/defect/"
 FIXTURE_INJECTION_PREFIX = "/fx/inject/"
+
+
+def _fixture_preset(preset_id: PresetId, label: str, kind: PresetKind, self_origin: str, self_host: str, prefix: str) -> Preset:
+    return Preset(
+        preset_id=preset_id,
+        label_ja=label,
+        kind=kind,
+        spec_seed_urls=(f"{self_origin}{prefix}spec/", f"{self_origin}{prefix}faq/"),
+        submission_url=f"{self_origin}{prefix}app/",
+        submission_page_url=f"{self_origin}{prefix}submission/",
+        allowed_prefixes=(UrlPrefix(host=self_host, path_prefix=prefix),),
+    )
 
 
 def _host_path(url: str) -> tuple[str, str]:
@@ -350,22 +379,13 @@ def build_presets(settings: Settings | None = None) -> dict[PresetId, Preset]:
             submission_url=submission,
             allowed_prefixes=(*lp_prefixes, *self_prefixes),
         ),
-        PRESET_SAMPLE_DEFECT: Preset(
-            preset_id=PRESET_SAMPLE_DEFECT,
-            label_ja="欠陥入りの架空サンプル",
-            kind=PresetKind.FIXTURE_DEFECT,
-            spec_seed_urls=(f"{self_origin}{FIXTURE_DEFECT_PREFIX}spec/",),
-            submission_url=f"{self_origin}{FIXTURE_DEFECT_PREFIX}submission/",
-            allowed_prefixes=(UrlPrefix(host=self_host, path_prefix=FIXTURE_DEFECT_PREFIX),),
+        PRESET_SAMPLE_DEFECT: _fixture_preset(
+            PRESET_SAMPLE_DEFECT, "欠陥入りの架空サンプル", PresetKind.FIXTURE_DEFECT, self_origin, self_host, FIXTURE_DEFECT_PREFIX
         ),
-        PRESET_SAMPLE_INJECTION: Preset(
-            preset_id=PRESET_SAMPLE_INJECTION,
-            label_ja="偽の命令入りの架空サンプル",
-            kind=PresetKind.FIXTURE_INJECTION,
-            spec_seed_urls=(f"{self_origin}{FIXTURE_INJECTION_PREFIX}spec/",),
-            submission_url=f"{self_origin}{FIXTURE_INJECTION_PREFIX}submission/",
-            allowed_prefixes=(UrlPrefix(host=self_host, path_prefix=FIXTURE_INJECTION_PREFIX),),
-        ),
+        PRESET_SAMPLE_INJECTION: _fixture_preset(
+            PRESET_SAMPLE_INJECTION, "偽の命令入りの架空サンプル", PresetKind.FIXTURE_INJECTION, self_origin, self_host,
+            FIXTURE_INJECTION_PREFIX,
+        ),  # fmt: skip
     }
 
 
@@ -393,6 +413,10 @@ def startup_violations(
     out: list[str] = []
     if settings.fetch_backend is not FetchBackend.REMOTE:
         out.append("ENV=public では FETCH_MODE=remote が必須")
+    if settings.role is Role.AGENT and settings.state_backend is not StateBackend.FIRESTORE:
+        out.append("ENV=public では STATE_BACKEND=firestore が必須（メモリの枠はインスタンスごとで上限にならない）")
+    if settings.role is Role.AGENT and settings.self_origin is None:
+        out.append("ENV=public では SELF_ORIGIN が必須（Origin の照合とフィクスチャの取得先に使う）")
     if env.get("GOOGLE_APPLICATION_CREDENTIALS"):
         out.append("GOOGLE_APPLICATION_CREDENTIALS が設定されています（鍵ファイルを持たせない）")
     bad = sorted(k for k in env if k.startswith(_FORBIDDEN_ENV_PREFIXES))

@@ -697,12 +697,18 @@ class Preset(_Frozen):
     label_ja: Display40
     kind: PresetKind
     spec_seed_urls: tuple[HttpsUrl, ...] = Field(max_length=3)  # 要項側のシード（最大3）
-    submission_url: HttpsUrl | None = None  # SUBMISSION_URL（検査される提出物）
+    submission_url: HttpsUrl | None = None  # SUBMISSION_URL（検査される提出物。http_probe の SUBMISSION_URL はこれ）
+    # 提出物の説明ページ（第3弾で追加）。ACQUIRE が提出物の文書として取得する。None なら submission_url を取得する。
+    # デプロイURL（submission_url）がログイン壁でも、公開説明文の字数・漏洩は説明ページで検査できるようにするため（プリセット②③）
+    submission_page_url: HttpsUrl | None = None
     allowed_prefixes: tuple[UrlPrefix, ...] = Field(max_length=8)
 
     @model_validator(mode="after")
     def _seeds_in_scope(self) -> "Preset":
-        for u in (*self.spec_seed_urls, *([self.submission_url] if self.submission_url else [])):
+        extra = [u for u in (self.submission_url, self.submission_page_url) if u]
+        if self.submission_page_url and not self.submission_url:
+            raise ValueError("submission_page_url は submission_url と組で使います")
+        for u in (*self.spec_seed_urls, *extra):
             parts = urlsplit(u)
             host = (parts.hostname or "").lower()
             path = parts.path or "/"

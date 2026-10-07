@@ -465,7 +465,7 @@ class Governor:
         """プリセットの要項・提出URL以外のホストなら、その別名（予算の第三者 origin に数える）。"""
         host = (urlsplit(href).hostname or "").lower()
         p = self.state.preset
-        own = {(urlsplit(u).hostname or "").lower() for u in (*p.spec_seed_urls, *([p.submission_url] if p.submission_url else []))}
+        own = {(urlsplit(u).hostname or "").lower() for u in (*p.spec_seed_urls, *(u for u in (p.submission_url, p.submission_page_url) if u))}
         return None if host in own else _origin_alias(host)
 
     def _check_mark(self, call: ToolCall, req) -> Admission | None:  # noqa: ANN001

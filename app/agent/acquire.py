@@ -30,7 +30,8 @@ async def acquire(state: RunState, gov: Governor, fetch: FetchPort) -> None:
         (url, DocRole.SPEC, f"要項 {i}") for i, url in enumerate(p.spec_seed_urls, start=1)
     ]
     if p.submission_url:
-        targets.append((p.submission_url, DocRole.SUBMISSION, "提出物"))
+        # 説明ページがあればそれを提出物の文書にする（デプロイURLの到達性は http_probe が SUBMISSION_URL で別に見る）
+        targets.append((p.submission_page_url or p.submission_url, DocRole.SUBMISSION, "提出物"))
     cap = gov.meter.caps.fetches_acquire
     if len(targets) > cap:
         # 取得は ACQUIRE の枠（3回）まで。要項のシードが多い時は、検査の対象である提出物を残し、末尾の要項シードを落とす

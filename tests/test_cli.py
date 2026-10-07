@@ -25,21 +25,27 @@ from tests.fetch_fakes import SUB_URL, make_result, redirect
 
 SETTINGS = Settings(self_origin="https://svc.example.invalid")  # sample_defect の取得先が svc.example.invalid/fx/defect/ になる
 CLI_SPEC_URL = "https://svc.example.invalid/fx/defect/spec/"
+CLI_FAQ_URL = "https://svc.example.invalid/fx/defect/faq/"  # 第3弾: 要項は2ページ（spec/・faq/）
+CLI_APP_URL = "https://svc.example.invalid/fx/defect/app/"  # 第3弾: デプロイURL（SUBMISSION_URL）。説明ページは submission/
 
 
 def cli_fetch() -> RoutedFetch:
     return RoutedFetch(
         {
             (CLI_SPEC_URL, FetchMode.PAGE): make_result(CLI_SPEC_URL, body=SPEC_HTML),
+            (CLI_FAQ_URL, FetchMode.PAGE): make_result(CLI_FAQ_URL, body="<html><body><p>よくある質問はありません。</p></body></html>"),
             (SUB_URL, FetchMode.PAGE): make_result(SUB_URL, body=SUBMISSION_HTML),
-            (SUB_URL, FetchMode.PROBE): make_result(SUB_URL, redirects=(redirect(),), final_url=LOGIN_URL, body=LOGIN_HTML),
+            (CLI_APP_URL, FetchMode.PROBE): make_result(
+                CLI_APP_URL, redirects=(redirect(frm=CLI_APP_URL),), final_url=LOGIN_URL, body=LOGIN_HTML
+            ),
         }
     )
 
 
 def run_cli(argv, *, reader=None, planner=None, fetch=None):
     out, err = io.StringIO(), io.StringIO()
-    code = main(argv, fetch=fetch or cli_fetch(), reader_model=reader or standard_reader(), planner_model=planner,
+    # 要項は2ページ（spec/・faq/）なので Reader は2回呼ばれる。2回目（FAQ）は要件なしの応答
+    code = main(argv, fetch=fetch or cli_fetch(), reader_model=reader or standard_reader(reader_reply()), planner_model=planner,
                 settings=SETTINGS, stdout=out, stderr=err)
     return code, out.getvalue(), err.getvalue()
 

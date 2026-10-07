@@ -32,6 +32,8 @@
   TRANSIENT→TRANSIENT／SPA_SHELL→NEEDS_JS／BLOCKED→OUT_OF_SCOPE（追跡しなかった転送）か FETCH_BLOCKED／UNSUPPORTED_TYPE→UNSUPPORTED_TYPE／
   LIMIT_UNDECIDABLE→HUMAN_ONLY（数え方は人が決める）／too_large→TRUNCATED／転送の上限→FETCH_BLOCKED／検査できないクラス→OUT_OF_SCOPE／他→NO_EVIDENCE。
 """
+import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -43,6 +45,8 @@ from app.contracts import (
     REASON_LABEL_JA,
     AdjudicationInput,
     Checker,
+    Contradiction,
+    ContradictionBasis,
     DocMeta,
     DocRole,
     EvidenceRef,
@@ -51,6 +55,7 @@ from app.contracts import (
     ObsCode,
     ObsOutcome,
     PageClass,
+    Slot,
     UnverifiableMark,
     UnverifiableReason,
     Verdict,
@@ -183,6 +188,20 @@ def _inconclusive_reason(o: Observation) -> UnverifiableReason:
 
 
 # --- 証拠チップのラベル（コードが観測から組む。Display60）---------------------------------------
+# leak_scan の facts のキー → 証拠チップの語（見つけた文字列そのものは載せない。種類と件数だけ）
+_LEAK_KIND_JA = (
+    ("email", "メール"),
+    ("service_url", "サービスの直URL"),
+    ("private_ip", "内部IP"),
+    ("google_api_key", "APIキー"),
+    ("oauth_token", "トークン"),
+    ("private_key", "秘密鍵"),
+    ("service_account", "サービスアカウント"),
+    ("github_token", "トークン"),
+    ("aws_key_id", "アクセスキー"),
+)
+
+
 def evidence_label(o: Observation) -> str:
     """観測 → 証拠チップの短い文（60字以内）。例「302→/login・password欄あり」「1,130字（上限800字）」。"""
     c = o.code
@@ -256,7 +275,8 @@ def evidence_label(o: Observation) -> str:
     if c is ObsCode.TERMS_ABSENT:
         return "求められた語が本文に無い"
     if c is ObsCode.LEAK_FOUND:
-        return "公開してはいけない文字列あり"
+        kinds = [f"{ja}{_n(_int(o, key))}件" for key, ja in _LEAK_KIND_JA if _int(o, key)]
+        return _clip("公開してはいけない文字列あり" + (f"（{'・'.join(kinds)}）" if kinds else ""), 60)
     if c is ObsCode.NO_LEAK:
         return "公開してはいけない文字列なし"
     return _clip(f"観測 {c.value}", 60)
@@ -529,3 +549,64 @@ def adjudicate(inp: AdjudicationInput) -> tuple[Verdict, ...]:
     return tuple(
         _decide(r, by_req.get(r.req_id, []), marks.get(r.req_id), docs, obs_by_id) for r in inp.requirements
     )
+
+
+# --- 要項間の矛盾（判定表の外で別集計。設計 §5-1）----------------------------------------------------
+# 矛盾はコードが決める: 同じ slot（Reader が付ける固定語彙）を持つ、異なる文書の2つの検証済み引用から、日付・同単位の数値を
+# コードの正規表現で取り出し、両方に値があって1つも重ならない時だけ矛盾とする（ContradictionBasis.TOKEN_DIFF）。
+# モデルの「同じ話題だ」という主張は根拠にしない（引用の中の値だけを比べる）。排他属性ペア（現地↔オンライン）は未実装。
+_DATE = re.compile(
+    r"(?<!\d)(\d{1,2})\s*(?:月\s*(\d{1,2})\s*日|/(\d{1,2})(?!\d))"  # 10月15日・10/15
+    r"(?:\s*\([^)]{1,6}\))?"  # （水）などの曜日
+    r"(?:\s*(\d{1,2})\s*(?::|時)\s*(\d{2})?)?"  # 23:59・12時
+)
+_NUMBER_BY_SLOT: dict[Slot, re.Pattern[str]] = {
+    Slot.CHAR_LIMIT: re.compile(r"(\d[\d,]*)\s*(文字|字)"),
+    Slot.TEAM_SIZE: re.compile(r"(\d+)\s*(名|人)"),
+    Slot.VIDEO_LENGTH: re.compile(r"(\d+)\s*(分|秒)"),
+}
+MAX_CONTRADICTIONS = 16
+
+
+def slot_tokens(slot: Slot, text: str) -> tuple[str, ...]:
+    """引用（コードが原文から切り出した1文）から、矛盾の比較に使う値を取り出す。順序を保ち重複を除く。"""
+    flat = unicodedata.normalize("NFKC", text)
+    out: list[str] = []
+    if slot is Slot.DEADLINE:
+        for m in _DATE.finditer(flat):
+            month, day = int(m.group(1)), int(m.group(2) or m.group(3))
+            if not (1 <= month <= 12 and 1 <= day <= 31):
+                continue
+            tok = f"{month}/{day}"
+            if m.group(4) is not None:
+                hour, minute = int(m.group(4)), int(m.group(5) or 0)
+                if hour <= 24 and minute < 60:
+                    tok += f" {hour}:{minute:02d}"
+            out.append(tok)
+    elif slot in _NUMBER_BY_SLOT:
+        for m in _NUMBER_BY_SLOT[slot].finditer(flat):
+            out.append(f"{int(m.group(1).replace(',', ''))}{m.group(2).replace('文字', '字')}")
+    return tuple(dict.fromkeys(out))
+
+
+def find_contradictions(requirements: Sequence[VerifiedRequirement]) -> tuple[Contradiction, ...]:
+    """要項間の矛盾（RunRecord.contradictions）。検証済みの引用（span あり）の対だけを、異なる文書どうしで比べる。"""
+    cands = [
+        (r, toks)
+        for r in requirements
+        if r.span is not None and r.slot is not Slot.NONE and (toks := slot_tokens(r.slot, r.span.original_span))
+    ]
+    out: list[Contradiction] = []
+    for i, (a, ta) in enumerate(cands):
+        for b, tb in cands[i + 1 :]:
+            assert a.span is not None and b.span is not None
+            if a.slot is not b.slot or a.span.doc_id == b.span.doc_id or set(ta) & set(tb):
+                continue
+            out.append(
+                Contradiction(
+                    slot=a.slot, req_ids=(a.req_id, b.req_id), basis=ContradictionBasis.TOKEN_DIFF, tokens=(ta[0][:40], tb[0][:40])
+                )
+            )
+            if len(out) >= MAX_CONTRADICTIONS:
+                return tuple(out)
+    return tuple(out)

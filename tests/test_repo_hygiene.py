@@ -21,9 +21,14 @@ ROOT = Path(__file__).resolve().parents[1]
 STDLIB = set(sys.stdlib_module_names)
 
 # 直接 import される外部パッケージ → それを提供する配布名。未知の import が増えたらここへ足す（宣言漏れを止めるため）。
-PROD_IMPORTS = {"fastapi": "fastapi", "google": "google-genai", "httpcore": "httpcore", "pydantic": "pydantic"}
+PROD_IMPORTS = {
+    "fastapi": "fastapi", "google": "google-genai", "httpcore": "httpcore", "pydantic": "pydantic",
+    "anyio": "anyio", "uvicorn": "uvicorn",  # 第3弾: 公開面（SSE の切断時の精算・起動）
+}  # fmt: skip
+# google 名前空間は配布が分かれる。下位モジュール → 配布名（google だけでは足りない＝宣言漏れを見逃さない）
+GOOGLE_SUBMODULE_DISTS = {"google.genai": "google-genai", "google.cloud.firestore": "google-cloud-firestore"}
 TEST_ONLY_IMPORTS = {"pytest": "pytest", "cryptography": "cryptography", "idna": "idna"}
-TEST_ONLY_DISTS = {"pytest", "pytest-asyncio", "cryptography", "idna"}  # 本番に宣言してはいけないもの
+TEST_ONLY_DISTS = {"pytest", "pytest-asyncio", "cryptography", "idna", "httpx"}  # 本番に宣言してはいけないもの
 
 
 def _req_lines(name: str) -> list[str]:
@@ -171,9 +176,15 @@ ALLOWED_EDGES: dict[str, set[str]] = {
     "checks": {"config", "contracts", "errors", "ingest"},
     "adjudicate": {"checks", "contracts"},
     "main": set(),  # S1 は他の app モジュールに依存しない
+    # 第3弾
+    "quota": {"config", "contracts", "jsonlog"},
+    "egress_guard": {"config"},
+    "state_firestore": {"quota"},
 }
-TOP_LEVEL_ONLY = {"agent", "cli", "main"}  # 他の単位から import されない
-COMPOSERS: dict[str, set[str]] = {"cli": {"agent"}}  # 例外: 入口（python -m app.cli）は、組み立て済みの agent を呼ぶ
+TOP_LEVEL_ONLY = {"agent", "cli", "main", "web"}  # 他の単位から import されない
+# 例外: 入口は、組み立て済みの agent を呼ぶ。cli（python -m app.cli）・web（公開面 S2）・fixtures（評価 eval.py。OracleReader＋router で
+# 通しを回す）。agent はこれらを import しない（一方向）。
+COMPOSERS: dict[str, set[str]] = {"cli": {"agent"}, "web": {"agent"}, "fixtures": {"agent"}}
 
 
 def test_app_modules_import_in_one_direction_only():
@@ -200,10 +211,39 @@ def test_ingest_uses_the_net_package_only_for_the_pure_url_check():
                 assert not any(a.name.startswith("app.net") for a in node.names), p.name
 
 
+def _google_imports(root: str) -> dict[str, set[str]]:
+    """google 名前空間の import（下位モジュールの名前 → ファイル）。`from google import genai` は google.genai として数える。"""
+    found: dict[str, set[str]] = {}
+    for p in (ROOT / root).rglob("*.py"):
+        if "__pycache__" in p.parts:
+            continue
+        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                names = [f"{node.module}.{a.name}" for a in node.names] if node.module in ("google", "google.cloud") else [node.module]
+            for n in names:
+                if n.split(".")[0] == "google":
+                    found.setdefault(n, set()).add(p.relative_to(ROOT).as_posix())
+    return found
+
+
 def test_the_vertex_sdk_is_imported_only_by_the_model_port_and_the_s1_service():
     allowed = {"app/model/gemini.py", "app/main.py"}
-    offenders = sorted(f for f in _third_party_imports("app").get("google", set()) if f not in allowed)
-    assert offenders == []
+    files = {f for mod, fs in _google_imports("app").items() if mod.startswith("google.genai") for f in fs}
+    assert sorted(files - allowed) == []
+
+
+def test_every_google_namespace_import_is_a_declared_distribution_in_its_own_place():
+    """google.* は配布が別々（google-genai・google-cloud-firestore）。下位モジュールごとに宣言と置き場所を確かめる。"""
+    declared = {_dist(line) for line in _req_lines("requirements.txt")}
+    places = {"google.genai": {"app/model/gemini.py", "app/main.py"}, "google.cloud.firestore": {"app/state_firestore.py"}}
+    for mod, files in _google_imports("app").items():
+        key = next((k for k in GOOGLE_SUBMODULE_DISTS if mod == k or mod.startswith(k + ".")), None)
+        assert key is not None, f"未知の google 名前空間の import {mod}（{sorted(files)}）"
+        assert GOOGLE_SUBMODULE_DISTS[key] in declared, f"{GOOGLE_SUBMODULE_DISTS[key]} は requirements.txt に宣言が無い"
+        assert files <= places[key], f"{mod} を {sorted(files - places[key])} が import している"
 
 
 def test_production_code_never_imports_tests_ops_or_pytest():

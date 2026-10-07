@@ -169,13 +169,12 @@ def test_checkers_do_no_io(monkeypatch):
 def test_g3_pieces_are_stubs_with_stable_signatures():
     r = req(C.CheckClass.LEAK, "R5")
     doc = sub_doc()
-    with pytest.raises(NotImplementedError):
-        check_leak_scan(r, [doc], "O1")
+    # leak_scan は第3弾で実装した（tests/test_leak_scan.py）。残りの差し込み口は contains_terms と AUTORUN
+    assert check_leak_scan(r, [doc], "O1").checker is C.Checker.LEAK_SCAN
     with pytest.raises(NotImplementedError):
         check_contains_terms(r, doc, "O1")
-    for checker in (C.Checker.LEAK_SCAN, C.Checker.CONTAINS_TERMS):
-        with pytest.raises(NotImplementedError):
-            run_checker(checker, r, CheckContext(docs={"D3": doc}), "O1")
+    with pytest.raises(NotImplementedError):
+        run_checker(C.Checker.CONTAINS_TERMS, r, CheckContext(docs={"D3": doc}), "O1")
     assert list(inspect.signature(check_leak_scan).parameters) == ["req", "docs", "obs_id"]
     assert list(inspect.signature(check_contains_terms).parameters) == ["req", "doc", "obs_id"]
     assert inspect.iscoroutinefunction(autorun)

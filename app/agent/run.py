@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from app.adjudicate import adjudicate
+from app.adjudicate import adjudicate, find_contradictions
 from app.agent.acquire import acquire
 from app.agent.budget import BudgetMeter, Clock
 from app.agent.governor import Governor
@@ -98,7 +98,8 @@ async def run_audit(
     registry_kwargs = {} if sleep is None else {"sleep": sleep}
     registry = ToolRegistry(state=state, governor=gov, fetch=fetch, **registry_kwargs)
 
-    def result(record_reqs: tuple[VerifiedRequirement, ...], verdicts: tuple[Verdict, ...], issues=(), *, snapshot: bool = True) -> RunResult:  # noqa: ANN001
+    def result(record_reqs: tuple[VerifiedRequirement, ...], verdicts: tuple[Verdict, ...], issues=(), *, snapshot: bool = True,
+               contradictions: tuple = ()) -> RunResult:  # noqa: ANN001
         if snapshot:  # 中止の時は、ここで最後の予算の要約を残す（通常は DONE の前に残す）
             gov.snapshot()
         injection = tuple(s for d in state.docs.values() for s in d.injection_signals)
@@ -117,9 +118,10 @@ async def run_audit(
             docs=state.doc_metas(),
             requirements=record_reqs,
             verdicts=verdicts,
+            contradictions=contradictions,
             injection_signals=injection,
             observations=tuple(state.observations)[:64],
-            summary=RunSummary.compute(record_reqs, verdicts, (), injection, trace.events, capped=state.capped),
+            summary=RunSummary.compute(record_reqs, verdicts, contradictions, injection, trace.events, capped=state.capped),
             budget=meter.budget.snapshot(),
             events=tuple(trace.events),
             omitted_events=trace.omitted,
@@ -175,7 +177,8 @@ async def run_audit(
             gov.phase, Actor.ADJUDICATOR, TraceType.VERDICT, req_id=v.req_id, verdict=v.label,
             reason_code=v.reason_code.value if v.reason_code else None,
         )  # fmt: skip
+    contradictions = find_contradictions(reqs)  # 要項間の矛盾（判定表の外。最終再検証を通った引用だけで比べる）
     gov.snapshot()
     gov.enter(Phase.REPORT)
     gov.enter(Phase.DONE)
-    return result(reqs, verdicts, reverified.issues, snapshot=False)
+    return result(reqs, verdicts, reverified.issues, snapshot=False, contradictions=contradictions)
