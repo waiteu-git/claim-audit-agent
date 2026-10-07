@@ -420,8 +420,10 @@ def startup_violations(
     env = os.environ if environ is None else environ
     mods = sys.modules if loaded_modules is None else loaded_modules
     out: list[str] = []
-    if settings.fetch_backend is not FetchBackend.REMOTE:
-        out.append("ENV=public では FETCH_MODE=remote が必須")
+    if settings.role is Role.AGENT and settings.fetch_backend is not FetchBackend.REMOTE:
+        # agent は、外向きの取得を取得専用サービス（fetcher）に任せる。fetcher 自身は SafeFetch をプロセス内で使う（remote にしない）。
+        # 10/8: この条件が全ロールに掛かっていて、雛形どおりに出した fetcher が起動を拒否されることを、デプロイ前に手元で見つけた
+        out.append("ENV=public の agent では FETCH_MODE=remote が必須")
     if settings.role is Role.AGENT and settings.state_backend is not StateBackend.FIRESTORE:
         out.append("ENV=public では STATE_BACKEND=firestore が必須（メモリの枠はインスタンスごとで上限にならない）")
     if settings.role is Role.AGENT and settings.self_origin is None:

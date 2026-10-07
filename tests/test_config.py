@@ -241,3 +241,38 @@ def test_importing_the_production_modules_never_imports_scripted_port():
 def test_presets_json_has_no_real_identifiers():
     blob = json.dumps({k: v.model_dump(mode="json") for k, v in cfg.PRESETS.items()}, ensure_ascii=False)
     assert "example.invalid" in blob and ".run.app" not in blob and "zenn" not in blob.lower()
+
+
+def test_a_public_fetcher_starts_with_the_deploy_script_settings_and_only_the_agent_needs_remote_fetch():
+    """回帰（10/8）: ENV=public の「FETCH_MODE=remote が必須」が全ロールに掛かっていて、deploy.sh の通りに出した取得専用サービス
+    （ROLE=fetcher・FETCH_MODE なし）が起動を拒否されることを、デプロイ前に見つけた。fetcher は SafeFetch をプロセス内で使う。"""
+    env = {"ROLE": "fetcher", "ENV": "public", "ALLOWED_PREFIXES": "exact:svc.example.invalid/page"}  # deploy.sh fetcher と同じ
+    s = cfg.load_settings(env)
+    assert cfg.startup_violations(s, env, {}) == []
+    cfg.assert_startup_safe(s, env, {})
+    # agent は、取得を fetcher に任せる（remote）ことが必須のまま
+    s, env = _public(FETCH_MODE="inproc")
+    assert any("FETCH_MODE=remote" in v for v in cfg.startup_violations(s, env, {}))
+    # fetcher でも、鍵ファイルや故障注入の変数は拒否する
+    env = {"ROLE": "fetcher", "ENV": "public", "ALLOWED_PREFIXES": "svc.example.invalid", "GOOGLE_APPLICATION_CREDENTIALS": "/x/key.json"}
+    assert any("GOOGLE_APPLICATION_CREDENTIALS" in v for v in cfg.startup_violations(cfg.load_settings(env), env, {}))
+
+
+def test_the_web_entrypoint_turns_on_json_logging_before_serving():
+    """回帰（10/8）: setup_logging が呼ばれておらず、公開サービスがアプリのログを出していなかった。
+    組み立て（build_app）がログを有効にすること、取得専用サービスと公開用の両方で同じことを確かめる。"""
+    import logging
+
+    from app.jsonlog import LOGGER_NAME
+    from app.web.__main__ import build_app
+
+    logger = logging.getLogger(LOGGER_NAME)
+    for h in list(logger.handlers):
+        logger.removeHandler(h)
+    app = build_app(cfg.load_settings({"ROLE": "fetcher", "ENV": "staging", "ALLOWED_PREFIXES": "exact:svc.example.invalid/x"}))
+    assert app.title == "claim-audit-fetcher"
+    assert any(type(h.formatter).__name__ == "JsonFormatter" for h in logger.handlers)
+    for h in list(logger.handlers):
+        logger.removeHandler(h)
+    app = build_app(cfg.load_settings({"ROLE": "agent", "ENV": "staging"}))
+    assert any(type(h.formatter).__name__ == "JsonFormatter" for h in logger.handlers)
