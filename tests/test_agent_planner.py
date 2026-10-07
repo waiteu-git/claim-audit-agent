@@ -72,7 +72,8 @@ def test_state_view_holds_ids_enums_and_numbers_only_never_text():
     for forbidden in (LEN_SENTENCE, AUTH_SENTENCE, LANG_SENTENCE, INJECTION, "ここを押せ", "https://", SVC_HOST, "応募要項", "架空"):
         assert forbidden not in j, forbidden
     d = json.loads(j)
-    assert set(d) == {"turn", "max_turns", "allowed_tools", "requirements", "docs", "links", "budget", "last_observation"}
+    assert set(d) == {"turn", "max_turns", "allowed_tools", "requirements", "docs", "links", "budget", "last_observation",
+                      "last_denial", "last_denied_tool"}  # 第3弾: 直前の拒否の理由（enum）と関数名
     assert set(d["requirements"][0]) == {"req_id", "kind", "check_class", "state", "routes", "calls_used"}
     assert set(d["docs"][0]) == {"doc_id", "role", "page_class", "truncated", "features"}
     assert set(d["links"][0]) == {"link_id", "role", "in_scope", "fetched"}
@@ -184,7 +185,8 @@ async def test_the_planner_sees_each_turn_only_what_the_code_rebuilds_no_history
     state, gov, reg = setup()
     port = standard_planner()
     await run_planner(state, gov, reg, port)
-    assert all(set(json.loads(r.contents)) <= {"turn", "max_turns", "allowed_tools", "requirements", "docs", "links", "budget", "last_observation"}
+    assert all(set(json.loads(r.contents)) <= {"turn", "max_turns", "allowed_tools", "requirements", "docs", "links", "budget", "last_observation",
+                                                "last_denial", "last_denied_tool"}
                for r in port.requests)
 
 

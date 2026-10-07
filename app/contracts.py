@@ -432,6 +432,38 @@ class PolicyId(StrEnum):
     MINTURN = "P-MINTURN-01"
 
 
+class DenialCode(StrEnum):
+    """Governor の拒否の理由コード（TraceEvent.reason_code と同じ語）。StateView.last_denial に「直前の拒否」として載る。
+
+    Planner は拒否の理由を見て別の手に移る（同じ呼び出しを繰り返すと P-DUP-01 の REPEATED_DENIAL で即座に拒否され、
+    拒否の連続が RunCaps.consecutive_denials_stop に達すると DEGRADED になる）。
+    """
+
+    UNKNOWN_TOOL = "UNKNOWN_TOOL"
+    TOOL_NOT_ALLOWED = "TOOL_NOT_ALLOWED"
+    BAD_ARGS = "BAD_ARGS"
+    TOOL_CAP = "TOOL_CAP"
+    OPEN_REQUIREMENTS = "OPEN_REQUIREMENTS"
+    UNKNOWN_LINK = "UNKNOWN_LINK"
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"
+    LOGIN_LINK = "LOGIN_LINK"
+    NO_SUBMISSION_URL = "NO_SUBMISSION_URL"
+    FETCH_CAP = "FETCH_CAP"
+    ORIGIN_CAP = "ORIGIN_CAP"
+    UNKNOWN_REQ = "UNKNOWN_REQ"
+    NOT_CHECKABLE = "NOT_CHECKABLE"
+    CLASS_MISMATCH = "CLASS_MISMATCH"
+    REQ_CAP = "REQ_CAP"
+    SPECULATIVE = "SPECULATIVE"
+    CODE_ONLY = "CODE_ONLY"
+    ALREADY_DECIDED = "ALREADY_DECIDED"
+    CHECK_FIRST = "CHECK_FIRST"
+    NO_PREMISE = "NO_PREMISE"
+    DUPLICATE_CALL = "DUPLICATE_CALL"
+    REPEATED_DENIAL = "REPEATED_DENIAL"  # 拒否された呼び出しを、状態が変わらないまま繰り返した
+    NO_CALL = "NO_CALL"
+
+
 class ModelPurpose(StrEnum):
     """モデルの役割は2つだけ（§2）。Reader=ツール無し・スキーマ強制、Planner=関数呼び出しのみ。"""
 
@@ -1378,6 +1410,9 @@ class StateView(_Frozen):
     links: tuple[StateLink, ...] = ()
     budget: BudgetSnapshot
     last_observation: ObsCode | None = None
+    # 直前の関数呼び出しが拒否された時の理由と関数名（許可されると消える）。同じ呼び出しの繰り返しを避けさせるための1語
+    last_denial: DenialCode | None = None
+    last_denied_tool: ToolName | None = None
 
     def to_prompt_json(self) -> str:
         """Planner へ渡す JSON。決定論的（キー順固定）。トレースの state_view にも同じものを残す。"""

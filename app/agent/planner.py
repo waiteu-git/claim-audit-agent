@@ -56,6 +56,9 @@ PLANNER_SYSTEM = (
     "- requirements の routes は検査の手順の候補です。state が open の要件から進めてください。\n"
     "- 検査できる要件にひとつも着手していない間は finish できません。\n"
     "- 判定（適合・不適合）は書きません。判定は観測からコードが決めます。\n"
+    "- mark_unverifiable の reason_code は宣言に列挙された値だけです（NO_EVIDENCE・BUDGET などはコードが付けます）。"
+    "検査できる要件には、検査が不確定だった後にだけ付けられます。\n"
+    "- last_denial があれば、直前の呼び出しはその理由で拒否されています。同じ呼び出しを繰り返さず、別の手か finish に移ってください。\n"
     "自由文は出力せず、関数呼び出しだけを返してください。"
 )
 
@@ -158,6 +161,8 @@ def build_state_view(state: RunState, gov: Governor, turn: int, max_turns: int, 
             links=tuple(links),
             budget=gov.meter.budget.snapshot(),
             last_observation=state.last_observation,
+            last_denial=gov.last_denial,
+            last_denied_tool=gov.last_denied_tool,
         )
 
     open_reqs = [r for r in reqs_all if r.state is ReqState.OPEN]
@@ -208,7 +213,7 @@ async def run_planner(state: RunState, gov: Governor, registry: ToolRegistry, mo
             purpose=ModelPurpose.PLANNER,
             system=PLANNER_SYSTEM,
             contents=contents,  # StateView の JSON だけ。生テキストは経路に無い
-            tools=registry.declarations(allowed),
+            tools=registry.declarations(allowed, mark_req_ids=tuple(gov.markable_reqs())),
             allowed_tool_names=allowed,
             max_output_tokens=PLANNER_MAX_OUTPUT_TOKENS,
             thinking_budget=caps.thinking_budget_planner,

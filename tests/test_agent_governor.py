@@ -315,6 +315,8 @@ def test_needs_js_needs_a_spa_shell_observation():
 def test_marks_on_speculative_or_already_decided_requirements_are_denied():
     state, gov = make_world(reqs=(raw(LEN_SENTENCE, Kind.SPECULATIVE), REQS[1]))
     turn(gov)
+    assert ToolName.MARK_UNVERIFIABLE not in gov.allowed_tools()  # 第3弾: 印を付けられる要件が無ければ許可リストに出さない
+    gov.begin_turn(1, 8, tuple(ToolName))  # 許可リストが古い（または乗っ取り）場合も、引数の検査が二段目で止める
     assert gov.admit(fc("mark_unverifiable", req_id="R1", reason_code="HUMAN_ONLY")).reason == "SPECULATIVE"
     state.observations.append(
         Observation(obs_id="O1", tool=ToolName.RUN_CHECK, checker="auth_wall", req_id="R2", code=ObsCode.AUTH_WALL,  # type: ignore[arg-type]

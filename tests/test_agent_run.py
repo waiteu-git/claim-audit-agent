@@ -269,7 +269,9 @@ async def test_planner_cannot_skip_the_auth_check_by_marking_it_needs_auth_first
     res = await go(InspectMode.PLANNER, planner=ScriptedPort(steps))
     v = verdicts(res)
     assert v["R2"].label is L.FAIL and v["R1"].label is L.FAIL  # 不適合は洗えない（S-03）
-    assert [e.reason_code for e in res.events if e.reason_code == "CHECK_FIRST"] == ["CHECK_FIRST"]
+    # 第3弾: 検査前の要件しか無い間は mark_unverifiable を許可リストに出さない（CHECK_FIRST に当たる前に TOOL_NOT_ALLOWED）
+    assert [e.reason_code for e in res.events if e.decision is not None and e.decision.value == "deny"] == ["TOOL_NOT_ALLOWED"]
+    assert not res.governor.state.marks
 
 
 async def test_a_valid_planner_mark_on_a_non_checkable_requirement_is_reported_with_its_premise():

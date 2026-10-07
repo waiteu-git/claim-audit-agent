@@ -14,7 +14,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from app.agent.governor import Admission, Governor
+from app.agent.governor import PLANNER_MARK_CODES, Admission, Governor
 from app.agent.state import RunState
 from app.agent.trace import digest
 from app.checks.http_probe import http_probe
@@ -31,10 +31,12 @@ from app.contracts import (
     Observation,
     ObsCode,
     ObsOutcome,
+    TOOL_ARG_MODELS,
     ToolDecl,
     ToolName,
     TraceType,
     UnverifiableMark,
+    llm_json_schema,
 )
 from app.errors import AppError, ErrorCode, classify
 from app.ingest.sanitize import sanitize
@@ -44,7 +46,10 @@ TOOL_DESCRIPTIONS: dict[ToolName, str] = {
     ToolName.FETCH_LINK: "リンク表の link_id で指したページを取得して文書に加える。URL は渡せない。",
     ToolName.HTTP_PROBE: "SUBMISSION_URL か link_id へ到達検査をして、ログイン壁などの観測を得る。",
     ToolName.RUN_CHECK: "要件 req_id に対応する決定論の検査（checker）を実行して観測を得る。値は検証済みの引用から取る。",
-    ToolName.MARK_UNVERIFIABLE: "前提が揃った要件を、理由コードつきの確認不能にする（NEEDS_AUTH・NEEDS_JS は前提の観測が要る）。",
+    ToolName.MARK_UNVERIFIABLE: (
+        "前提が揃った要件を、理由コードつきの確認不能にする。reason_code は列挙された値だけ（NEEDS_AUTH・NEEDS_JS は前提の観測が要る）。"
+        "検査できる要件は、検査が不確定だった時だけ。"
+    ),
     ToolName.FINISH: "検査を終える。検査できる要件に未着手のものが残る間は拒否される。",
 }
 
@@ -56,6 +61,16 @@ class ToolResult:
     observation: Observation | None = None
     mark: UnverifiableMark | None = None
     finished: bool = False
+
+
+def mark_unverifiable_schema(req_ids: "tuple[str, ...]" = ()) -> dict:
+    """mark_unverifiable の引数スキーマ。reason_code を PLANNER_MARK_CODES の列挙に絞る（maxItems は llm_json_schema が除く）。"""
+    schema = llm_json_schema(TOOL_ARG_MODELS[ToolName.MARK_UNVERIFIABLE])
+    props = schema["properties"]
+    props["reason_code"] = {"type": "string", "enum": sorted(c.value for c in PLANNER_MARK_CODES)}
+    if req_ids:
+        props["req_id"] = {"type": "string", "enum": list(req_ids)}
+    return schema
 
 
 _FETCH_CODE = {
@@ -83,9 +98,21 @@ class ToolRegistry:
         self._sleep = sleep
 
     @staticmethod
-    def declarations(allowed: "tuple[ToolName, ...]") -> tuple[ToolDecl, ...]:
-        """モデルへ渡す関数宣言。今ターンの許可リストに無い関数は宣言しない。"""
-        return tuple(ToolDecl.for_tool(n, TOOL_DESCRIPTIONS[n]) for n in allowed)
+    def declarations(allowed: "tuple[ToolName, ...]", *, mark_req_ids: "tuple[str, ...]" = ()) -> tuple[ToolDecl, ...]:
+        """モデルへ渡す関数宣言。今ターンの許可リストに無い関数は宣言しない。
+
+        mark_unverifiable の reason_code は、Planner が付けてよい理由（PLANNER_MARK_CODES）だけの列挙にする
+        （契約の UnverifiableReason は12語あり、そのまま渡すとコード専用の理由（NO_EVIDENCE・BUDGET 等）を選べてしまい、
+        Governor の CODE_ONLY で拒否され続ける＝10/7 のライブ実行で DEGRADED になった原因）。mark_req_ids を渡すと、
+        req_id も印を付けられる要件（Governor.markable_reqs）の列挙に絞る。最終の判断は常に Governor がする。
+        """
+        out = []
+        for n in allowed:
+            if n is ToolName.MARK_UNVERIFIABLE:
+                out.append(ToolDecl(name=n, description=TOOL_DESCRIPTIONS[n], parameters=mark_unverifiable_schema(mark_req_ids)))
+            else:
+                out.append(ToolDecl.for_tool(n, TOOL_DESCRIPTIONS[n]))
+        return tuple(out)
 
     # ---- 実行 ----------------------------------------------------------------------------------
     async def execute(self, adm: Admission) -> ToolResult:

@@ -8,11 +8,14 @@
                      推測や引用なしの要件への run_check・要件クラスと合わない checker・finish の時期尚早は P-MINTURN-01
   P-LINK-01          存在しない link_id・ログインのリンク
   P-SCOPE-01         スコープ外のリンク・提出URLが無い
-  P-DUP-01           同じ呼び出しの繰り返し（reason の言い換えで回避させないため、reason は照合に含めない）
+  P-DUP-01           同じ呼び出しの繰り返し（reason の言い換えで回避させないため、reason は照合に含めない）。拒否された呼び出しを
+                     状態（観測・印・ツール呼び出し数）が変わらないまま繰り返すと REPEATED_DENIAL（理由を再計算せず即座に拒否）
   P-BUDGET-CALLS-01  ツール呼び出し・取得・第三者 origin・要件ごとの3回・モデル呼び出しの枠
   P-BUDGET-TOKENS-01 トークンの枠
   P-UNVERIF-01       mark_unverifiable の前提（コードが付ける理由コードは Planner に付けさせない。NEEDS_AUTH / NEEDS_JS は前提の観測が要る。
-                     検査できる要件には、その検査を一度走らせた後だけ付けられる＝検査を省いて不適合を洗えない）
+                     検査できる要件には、その検査を一度走らせた後だけ付けられる＝検査を省いて不適合を洗えない）。
+                     許可リスト（allowed_tools）には、Planner の付けられる理由が実際にある要件が残る時だけ載せる
+                     （10/7 のライブ実行で、通らない mark_unverifiable を出し続けて拒否の連続で DEGRADED になったため）。
   P-MINTURN-01       finish が早すぎる（検査できる要件に、まだ1回も検査していないものが残っている）。予算が尽きた時と最終ターンは通す
   P-INJ-01           注入疑い区間に重なる引用（Reader の引用検証が出す。ここでは発行しない）
 
@@ -31,6 +34,7 @@ from app.config import PRICE_TABLE
 from app.contracts import (
     CHECK_CLASS_CHECKER,
     AbortReason,
+    DenialCode,
     Actor,
     Decision,
     DegradedReason,
@@ -125,7 +129,10 @@ class Governor:
     turn: int = 0
     max_turns: int = 1
     turn_allowed: tuple[ToolName, ...] = ()
+    last_denial: DenialCode | None = None  # 直前の拒否（StateView に載せる）。許可で消える
+    last_denied_tool: ToolName | None = None
     _seen: dict[str, int] = field(default_factory=dict)  # 呼び出しの鍵 → 許可した時点の観測の数
+    _denied: dict[str, tuple[int, int, int]] = field(default_factory=dict)  # 拒否した呼び出しの鍵 → 拒否した時点の状態
 
     # ---- フェーズ ------------------------------------------------------------------------------
     def enter(self, phase: Phase) -> None:
@@ -198,7 +205,13 @@ class Governor:
         self.denied += 1
         self.denial_streak += 1
         self._deny_event(policy, reason, name=name, req_id=req_id)
+        self.last_denial = DenialCode(reason) if reason in DenialCode.__members__ else None
+        self.last_denied_tool = ToolName(name) if name in {t.value for t in ToolName} else None
         return Admission(policy=policy, reason=reason)
+
+    def _state_mark(self) -> tuple[int, int, int]:
+        """拒否の繰り返しを見分けるための状態の指紋（観測の数・印の数・ツール呼び出しの数）。"""
+        return (len(self.state.observations), len(self.state.marks), self.meter.budget.tool_calls)
 
     def deny_no_call(self) -> None:
         """Planner が関数を呼ばずに応答した。何も実行されないが、拒否の連続として数える（自由文で時間を使わせない）。"""
@@ -299,10 +312,25 @@ class Governor:
             for r in st.requirements
         ):
             tools.append(ToolName.RUN_CHECK)
-        if any(r.req_id not in st.marks for r in self._openable()):
+        if self.markable_reqs():
             tools.append(ToolName.MARK_UNVERIFIABLE)
         tools.append(ToolName.FINISH)
         return tuple(tools)
+
+    def markable_reqs(self) -> list[str]:
+        """Planner が mark_unverifiable を通せる要件（PLANNER_MARK_CODES のどれかで前提が揃うもの）。
+
+        _check_mark の拒否条件のうち、理由コードに依らないもの（推測・印あり・決着済み・検査前・要件ごとの枠）を先に除く。
+        残った要件には HUMAN_ONLY などの前提の要らない理由が必ず通るので、許可リストに載せてよい。"""
+        st, cap = self.state, self.meter.caps.tool_calls_per_requirement
+        out = []
+        for r in self._openable():
+            if r.kind is Kind.SPECULATIVE or r.req_id in st.marks or st.calls_used(r.req_id) >= cap:
+                continue
+            if st.is_checkable(r) and not st.check_observations(r.req_id):
+                continue  # CHECK_FIRST: 検査できる要件は検査を一度走らせてから
+            out.append(r.req_id)
+        return out
 
     def begin_turn(self, turn: int, max_turns: int, allowed: Sequence[ToolName]) -> None:
         self.turn, self.max_turns, self.turn_allowed = turn, max_turns, tuple(allowed)
@@ -333,6 +361,19 @@ class Governor:
         if call.name not in self.turn_allowed:
             return self._deny(PolicyId.PHASE, "TOOL_NOT_ALLOWED", name=name)
 
+        key = _call_key(call)
+        # finish の拒否（時期尚早）はターンと予算で変わるので、繰り返しの即時拒否から外す
+        if call.name is not ToolName.FINISH and self._denied.get(key) == self._state_mark():
+            # 拒否された呼び出しを、何も変わらないまま繰り返した。理由は前回と同じなので再計算せず P-DUP-01 で止める
+            # （拒否の連続に数えるので、繰り返す Planner は consecutive_denials_stop で DEGRADED になる）
+            return self._deny(PolicyId.DUP, "REPEATED_DENIAL", name=name, req_id=getattr(call.args, "req_id", None))
+        adm = self._admit_parsed(call, name, key)
+        if not adm.allowed:
+            self._denied[key] = self._state_mark()
+        return adm
+
+    def _admit_parsed(self, call: ToolCall, name: str, key: str) -> Admission:
+        """検証済みの呼び出しの許可（予算・引数・重複）。"""
         b = self.meter.budget
         if not b.can_call_tool():
             return self._deny(PolicyId.BUDGET_CALLS, "TOOL_CAP", name=name)
@@ -341,7 +382,6 @@ class Governor:
         if verdict is not None:
             return verdict
 
-        key = _call_key(call)
         n_obs = len(self.state.observations)
         last = self._seen.get(key)
         # 同じ呼び出しの繰り返しは拒否する。ただし run_check だけは、前回の許可の後に別の観測が増えていれば（前回の1件は自分の結果）
@@ -356,6 +396,7 @@ class Governor:
         if req_id is not None and call.name in (ToolName.RUN_CHECK, ToolName.MARK_UNVERIFIABLE):
             self.state.req_calls[req_id] = self.state.calls_used(req_id) + 1
         self.denial_streak = 0
+        self.last_denial = self.last_denied_tool = None
         self.trace.emit(
             self.phase, Actor.PLANNER, TraceType.TOOL_REQUEST, name=name, req_id=req_id,
             args_digest=digest(call.args.model_dump(mode="json")),
