@@ -71,7 +71,11 @@ class GeminiPort:
         client: Any | None = None,
         thinking_param: ThinkingParam = "thinking_budget",
         kill_switch: Callable[[], bool] = lambda: False,
+        function_calling_mode: str = "ANY",
     ) -> None:
+        if function_calling_mode not in ("ANY", "AUTO"):
+            raise ValueError("function_calling_mode は ANY か AUTO")
+        self._fc_mode = function_calling_mode  # AUTO は注入耐性の対照（fixtures/baseline.py の素朴なエージェント）だけが使う
         self._model_id = model_id
         self._project = project
         self._location = location
@@ -134,12 +138,14 @@ class GeminiPort:
                     ]
                 )
             ]
-            kwargs["tool_config"] = types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(
+            if self._fc_mode == "AUTO":  # 関数を呼ぶかどうかをモデルに任せる（本作は使わない。素朴なエージェントの再現用）
+                fc = types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.AUTO)
+            else:
+                fc = types.FunctionCallingConfig(
                     mode=types.FunctionCallingConfigMode.ANY,  # 必ず関数を呼ばせる（自由文の脱出路を作らない）
                     allowed_function_names=[n.value for n in request.allowed_tool_names],
                 )
-            )
+            kwargs["tool_config"] = types.ToolConfig(function_calling_config=fc)
         return types.GenerateContentConfig(**kwargs)
 
     def to_response(self, resp: Any, latency_ms: int) -> ModelResponse:

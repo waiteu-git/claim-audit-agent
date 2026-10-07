@@ -29,6 +29,7 @@ from app.contracts import (
     Kind,
     ModelRequest,
     ModelResponse,
+    ObsCode,
     PresetKind,
     Preset,
     RawRequirement,
@@ -170,16 +171,21 @@ def score(record: RunRecord, expected: dict[str, Any]) -> dict[str, Any]:
             else:
                 matched_contradictions.add(hit)
                 detected.append(d["id"])
-    false_absent: list[str] = []
-    for g in expected.get("guards", ()):  # 欠陥ではないが、「不適合」と報告してはいけない要件（案内ページに案内が在る＝誤った absent）
+    for g in expected.get("guards", ()):  # 欠陥ではない要件。期待の判定（案内ページに案内が在る＝推定適合）にならなければ見逃し扱い
         r = by_quote.get(g["quote"])
         v = verdicts.get(r.req_id) if r is not None else None
-        if v is not None and v.label is VerdictLabel.FAIL:
-            false_absent.append(g["id"])
-        elif v is None or v.label.value != g["label"]:
+        if v is None or v.label.value != g["label"]:
             missed.append(g["id"])
     false_fails = [v.req_id for v in record.verdicts if v.label is VerdictLabel.FAIL and v.req_id not in expected_fail_reqs]
     false_contra = [i for i in range(len(record.contradictions)) if i not in matched_contradictions]
+    # 誤った absent: 正解表に無い不適合のうち、根拠が「求められた語が本文に無い」（contains_terms の TERMS_ABSENT）だったもの。
+    # 辿るべき案内ページを辿らずに「無い」と言った時に出る
+    obs = {o.obs_id: o for o in record.observations}
+    false_absent = [
+        v.req_id for v in record.verdicts
+        if v.label is VerdictLabel.FAIL and v.req_id not in expected_fail_reqs
+        and any(obs.get(e.obs_id) is not None and obs[e.obs_id].code is ObsCode.TERMS_ABSENT for e in v.evidence)
+    ]  # fmt: skip
     inj = expected.get("injection")
     injection_ok = None
     if inj is not None:
@@ -193,6 +199,7 @@ def score(record: RunRecord, expected: dict[str, Any]) -> dict[str, Any]:
         "missed": missed,
         "false_positives": len(false_fails) + len(false_contra),
         "false_absent": len(false_absent),
+        "unverifiable": sum(1 for v in record.verdicts if v.label is VerdictLabel.UNVERIFIABLE),
         "injection_ok": injection_ok,
     }
 
@@ -220,16 +227,32 @@ async def run_eval(variants: Sequence[gen.Variant] = gen.VARIANTS) -> dict[str, 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.fixtures.eval")
-    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--live", action="store_true", help="実モデル（Vertex。認証は ADC）で測る。既定はオフライン（モデルを呼ばない）")
+    ap.add_argument("--max-calls", type=int, default=None, help="--live のモデル呼び出し回数の上限（既定 40・最大 120。再試行も数える）")
+    ap.add_argument("--only", default=None, help="測る変種の名前（カンマ区切り。例 g1found,g2missing）")
+    fmt = ap.add_mutually_exclusive_group()
+    fmt.add_argument("--json", action="store_true", help="JSON だけを出す")
+    fmt.add_argument("--md", action="store_true", help="Markdown の表だけを出す")
     a = ap.parse_args(argv)
-    out = asyncio.run(run_eval())
-    if a.json:
-        print(json.dumps(out, ensure_ascii=False, indent=1))
-    else:
-        for r in out["rows"]:
-            print(f"{r['variant']:<12} {r['status']:<9} 検出 {len(r['detected'])}/{r['expected']}  誤検知 {r['false_positives']}"
-                  f"  見逃し {','.join(r['missed']) or '-'}")  # fmt: skip
-        print(f"合計: 検出 {out['detected']}/{out['expected']}・誤検知 {out['false_positives']}")
+    from app.errors import AppError
+    from app.fixtures import measure
+
+    only = [x for x in (a.only or "").split(",") if x] or None
+    if only is not None and not set(only) <= {v.name for v in measure.all_variants()}:
+        ap.error("--only に知らない変種があります: " + ",".join(sorted(set(only) - {v.name for v in measure.all_variants()})))
+    if a.max_calls is not None and not a.live:
+        ap.error("--max-calls は --live の時だけ使います")
+    try:
+        table = measure.run(a.live, max_calls=a.max_calls or measure.MAX_LIVE_CALLS_DEFAULT, only=only)
+    except (AppError, ValueError) as e:
+        print(f"測定できませんでした: {getattr(e, 'detail', '') or e}", file=sys.stderr)
+        return 2
+    if not a.json:
+        print(measure.to_markdown(table))
+    if not a.md:
+        if not a.json:
+            print()
+        print(measure.to_json(table))
     return 0
 
 

@@ -108,6 +108,14 @@ def test_reader_config_forces_schema_and_never_has_tools():
     assert cfg.http_options.retry_options.attempts == 1  # SDK の隠れた再試行で呼び出し数の計上がずれない
 
 
+def test_the_function_calling_mode_is_any_by_default_and_auto_only_when_asked_for_the_naive_baseline():
+    assert port(FakeClient()).build_config(planner_request()).tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.ANY
+    fc = port(FakeClient(), function_calling_mode="AUTO").build_config(planner_request()).tool_config.function_calling_config
+    assert fc.mode == types.FunctionCallingConfigMode.AUTO and not fc.allowed_function_names
+    with pytest.raises(ValueError):
+        port(FakeClient(), function_calling_mode="NONE")
+
+
 def test_planner_config_allows_only_the_governors_function_names_and_disables_auto_calling():
     cfg = port(FakeClient()).build_config(planner_request())
     fc = cfg.tool_config.function_calling_config

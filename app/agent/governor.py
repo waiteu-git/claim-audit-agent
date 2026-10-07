@@ -19,6 +19,9 @@
   P-MINTURN-01       finish が早すぎる（検査できる要件に、まだ1回も検査していないものが残っている）。予算が尽きた時と最終ターンは通す
   P-INJ-01           注入疑い区間に重なる引用（Reader の引用検証が出す。ここでは発行しない）
 
+方針変更（replan）: 直前の検査（run_check）が不確定だった後に、新しい材料を取りに行く fetch_link が許可されると、コードが replan の
+印（TraceType.REPLAN。直前の観測の id と符号つき）を残す。モデルの申告ではなく、観測と許可された呼び出しの並びだけで決める。
+
 停止の優先順: ABORTED（KILL > WALL_CLOCK）> DEGRADED（BUDGET > DENIAL_STREAK）。最初に決まった理由を残す。
 判定（Verdict）はここでは作らない（adjudicate.py だけ）。
 """

@@ -7,6 +7,8 @@ Planner（inspect_mode=planner）: LLM が関数呼び出しで検査を進め�
   * 呼べる関数はターンごとに Governor が決める許可リスト。宣言（tools）もその許可リストから作る。
 router（inspect_mode=router）: LLM 無し。要件の check_class から決まる検査を、決まった順に Governor 経由で走らせる。
   Planner が不安定な時の代替であり、A/B 比較の対照。Planner と同じ上限・同じ拒否規則・同じツールを通る。
+どちらも AUTORUN（autorun_phase.py。前提が揃う検査を必ず走らせる）の後に動き、AUTORUN で決まらなかった要件だけを扱う。
+  router は案内ページのリンクを辿らない（辿る手は Planner だけ。辿れば replan の印が残る＝governor.py）。
 
 どちらも判定は書かない。観測が溜まるだけで、判定は adjudicate.py（INSPECT の後）。
 """
@@ -268,7 +270,8 @@ async def run_planner(state: RunState, gov: Governor, registry: ToolRegistry, mo
 async def run_router(state: RunState, gov: Governor, registry: ToolRegistry) -> None:
     """LLM 無しの決定論の検査。Planner と同じ Governor・同じツールを通る。
 
-    順序: 提出URLの到達検査（認証壁・実行環境の署名が要る要件がある時だけ）→ 検査できる要件を req_id 順に run_check → finish。
+    AUTORUN が済ませた検査は繰り返さない（pending_checks は未着手の要件だけ）。残り（AUTORUN が前提不足で後回しにした要件・拒否された
+    手）について、順序: 提出URLの到達検査（まだ probe していない時だけ）→ 検査できる要件を req_id 順に run_check → finish。
     """
     turn = 0
     max_turns = gov.meter.caps.tool_calls + 1
