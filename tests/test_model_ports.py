@@ -196,3 +196,21 @@ def test_retry_needs_a_backoff_schedule():
     with pytest.raises(ValueError):
         RetryingPort(ScriptedPort([]), retries=1, backoff_s=())
 
+
+
+def test_parse_structured_clips_only_overlong_top_level_lists():
+    # 回帰（10/7 のライブ実行）: maxItems をスキーマから外すと、モデルが上限を超えて返し1チャンク丸ごとが捨てられた。
+    import json as _json
+
+    from app.contracts import ModelResponse, ReaderOutput
+    from app.errors import AppError
+    from app.model.port import parse_structured
+
+    req = {"quote": "提出物は日本語で記載すること。", "kind": "必須"}
+    over = ModelResponse(model="m", text=_json.dumps({"page_class": "content", "requirements": [req] * 45}, ensure_ascii=False))
+    out = parse_structured(over, ReaderOutput)
+    assert len(out.requirements) == 40
+    # 件数超過以外の違反（未知の欄）は、これまでどおり拒否する
+    bad = ModelResponse(model="m", text=_json.dumps({"page_class": "content", "requirements": [req] * 45, "extra": 1}, ensure_ascii=False))
+    with pytest.raises(AppError):
+        parse_structured(bad, ReaderOutput)

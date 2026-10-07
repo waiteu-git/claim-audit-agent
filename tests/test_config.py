@@ -79,7 +79,7 @@ def test_defaults_are_fail_closed(clean_env):
     s = cfg.load_settings({})
     assert s.env is EnvName.DEV and s.role is cfg.Role.AGENT and s.fetch_backend is cfg.FetchBackend.INPROC
     assert s.live_enabled is False and s.kill_switch is False and s.google_cloud_project is None
-    assert s.gemini_model_reader == s.gemini_model_planner == "gemini-3.7-flash" and s.gemini_location == "global"
+    assert s.gemini_model_reader == s.gemini_model_planner == "gemini-2.5-flash" and s.gemini_location == "asia-northeast1"
 
 
 def test_environment_is_read_into_settings():

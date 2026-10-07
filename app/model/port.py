@@ -34,5 +34,39 @@ def parse_structured(response: ModelResponse, model_cls: type[T]) -> T:
         raise AppError(ErrorCode.SCHEMA_VIOLATION, "モデルの出力が空")
     try:
         return model_cls.model_validate_json(response.text)
-    except (ValidationError, json.JSONDecodeError) as e:
+    except json.JSONDecodeError as e:
         raise AppError(ErrorCode.SCHEMA_VIOLATION, f"{model_cls.__name__} に合わない出力") from e
+    except ValidationError as e:
+        clipped = _clip_overlong_top_lists(response.text, e)
+        if clipped is None:
+            raise AppError(ErrorCode.SCHEMA_VIOLATION, f"{model_cls.__name__} に合わない出力") from e
+        try:
+            return model_cls.model_validate(clipped)
+        except ValidationError as e2:
+            raise AppError(ErrorCode.SCHEMA_VIOLATION, f"{model_cls.__name__} に合わない出力") from e2
+
+
+def _clip_overlong_top_lists(text: str, err: ValidationError) -> dict | None:
+    """違反が「最上位のリストの件数超過」だけなら、先頭から上限までに切り詰めた dict を返す。それ以外は None。
+
+    Vertex は構造化出力スキーマの maxItems を 400 で拒否する（2026-10-07 実測）ため、スキーマから外して送っている。
+    その結果モデルが上限を知らずに多く返すと、1チャンク丸ごとが捨てられていた（gemini-2.5-flash の実LPで発生）。
+    件数超過だけは切り詰めて受け入れ、ほかの違反（型・欄の過不足・長さ）はこれまでどおり拒否する。
+    （app.model は jsonlog に依存しない決まり＝ここではログを出さない。切り詰めは上限件数の到達として結果に表れる）
+    """
+    errors = err.errors()
+    if not errors or any(x.get("type") != "too_long" or len(x.get("loc", ())) != 1 for x in errors):
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    for x in errors:
+        key = x["loc"][0]
+        limit = (x.get("ctx") or {}).get("max_length")
+        if not isinstance(data.get(key), list) or not isinstance(limit, int):
+            return None
+        data[key] = data[key][:limit]
+    return data

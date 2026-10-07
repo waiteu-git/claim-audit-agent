@@ -5,7 +5,7 @@
 
 環境変数（既定は fail-closed 側）:
   ROLE(agent|fetcher) ENV(public|staging|dev) FETCH_MODE(inproc|remote) LIVE_ENABLED(1 のみ有効) KILL_SWITCH(1 のみ有効)
-  GOOGLE_CLOUD_PROJECT GEMINI_LOCATION(既定 global) GEMINI_MODEL(既定 gemini-3.7-flash) GEMINI_MODEL_READER GEMINI_MODEL_PLANNER
+  GOOGLE_CLOUD_PROJECT GEMINI_LOCATION(既定 asia-northeast1) GEMINI_MODEL(既定 gemini-2.5-flash) GEMINI_MODEL_READER GEMINI_MODEL_PLANNER
   PROMPT_VERSION SELF_ORIGIN SUBMISSION_URL FETCHER_URL LP_SEED_URLS(カンマ区切り・最大3) LOG_LEVEL
   ALLOWED_PREFIXES（S3 の取得スコープ。`[exact:]host[/path]` のカンマ区切り）
   PORT（既定 8080）STATE_BACKEND(memory|firestore。枠・予約の保存先) JUDGE_CODE_SHA256（審査員コードの sha256 の16進。カンマ区切り。
@@ -228,8 +228,10 @@ class FetchBackend(StrEnum):
     REMOTE = "remote"  # S2: fetcher（S3）へ ID token で
 
 
-DEFAULT_GEMINI_MODEL = "gemini-3.7-flash"
-DEFAULT_GEMINI_LOCATION = "global"
+# 10/7 実測: gemini-3.7-flash(global)は同じ入力で5〜17秒と揺れて504（自前の25秒期限）が出た。gemini-2.5-flash は
+# 東京で1〜2秒・LPの通し実行(router)18秒でDONE・要件64件。東京に置くとデータもリージョン内に留まる。環境変数で戻せる
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_LOCATION = "asia-northeast1"
 _FORBIDDEN_ENV_PREFIXES = ("FAULT_", "SCRIPTED_")  # 故障注入・台本は staging 専用（§8 ⑩）
 
 
