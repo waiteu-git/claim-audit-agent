@@ -974,12 +974,19 @@ class VerifiedSpan(_Frozen):
     end: int = Field(gt=0)
     original_span: Display160 = Field(min_length=1)
     occurrences: int = Field(ge=1)
+    # 同梱の REPLAY だけが True にする（第三者の原文を短くして持つ。start/end は元の位置のまま）。
+    # True の span は原文との照合に使えない＝再生時に再検証しない（保存時に検証済みの印だけを見せる）
+    quote_clipped: bool = False
 
     @model_validator(mode="after")
     def _span(self) -> "VerifiedSpan":
         if self.end <= self.start:
             raise ValueError("end は start より大きく")
-        if len(self.original_span) != self.end - self.start:
+        n, width = len(self.original_span), self.end - self.start
+        if self.quote_clipped:
+            if n > width:
+                raise ValueError("切り詰めた original_span が元の区間より長いです")
+        elif n != width:
             raise ValueError("original_span の長さが end-start と一致しません")
         return self
 
@@ -1706,6 +1713,7 @@ class RunRecord(_Frozen):
     budget: BudgetSnapshot
     events: tuple[TraceEvent, ...] = Field(default=(), max_length=MAX_EVENTS_PER_RUN)
     omitted_events: int = Field(default=0, ge=0)  # 間引いたイベント数（「省略N件」表示用。§7）
+    omitted_requirements: int = Field(default=0, ge=0)  # 同梱の REPLAY が件数上限で省いた要件の数（件数だけ残す。summary は元の実行の値）
     public: bool = False  # 採録した録画元（GET が run_id 無しで返してよい）
 
     @model_validator(mode="after")

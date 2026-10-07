@@ -1528,6 +1528,7 @@
   }
  ],
  "omitted_events": 0,
+ "omitted_requirements": 0,
  "planner_model": "router",
  "preset_id": "sample_defect",
  "prompt_version": "dev",
@@ -1549,6 +1550,7 @@
     "end": 91,
     "occurrences": 1,
     "original_span": "作品は10月15日 23:59（日本時間）までに提出すること。",
+    "quote_clipped": false,
     "start": 60
    }
   },
@@ -1567,6 +1569,7 @@
     "end": 113,
     "occurrences": 1,
     "original_span": "作品の公開説明文は800字以内とすること。",
+    "quote_clipped": false,
     "start": 92
    }
   },
@@ -1585,6 +1588,7 @@
     "end": 147,
     "occurrences": 1,
     "original_span": "デプロイしたURLは、審査員がログインせずに開ける状態にすること。",
+    "quote_clipped": false,
     "start": 114
    }
   },
@@ -1603,6 +1607,7 @@
     "end": 227,
     "occurrences": 1,
     "original_span": "公開説明文には、連絡先のメールアドレスやサービスの内部URLを記載してはならない。",
+    "quote_clipped": false,
     "start": 186
    }
   },
@@ -1621,6 +1626,7 @@
     "end": 166,
     "occurrences": 1,
     "original_span": "1チームの人数は4名までとすること。",
+    "quote_clipped": false,
     "start": 148
    }
   },
@@ -1639,6 +1645,7 @@
     "end": 180,
     "occurrences": 1,
     "original_span": "デモ動画の添付は任意です。",
+    "quote_clipped": false,
     "start": 167
    }
   },
@@ -1657,6 +1664,7 @@
     "end": 70,
     "occurrences": 1,
     "original_span": "作品は10月16日 12:00（日本時間）までに提出しなければなりません。",
+    "quote_clipped": false,
     "start": 33
    }
   }

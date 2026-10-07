@@ -261,6 +261,10 @@
     sum.appendChild(stat("引用検証", fmt(s.quotes_verbatim) + " / " + fmt(s.quotes_checked) + " 件が逐語一致"));
     sum.appendChild(stat("推測へ降格", fmt(s.demoted_to_speculative) + " 件"));
     sum.appendChild(stat("判定", ["不適合", "適合", "推定適合", "確認不能", "参考"].map((k) => k + " " + fmt(counts[k] || 0)).join("・")));
+    if (rec.mode === "REPLAY") {
+      sum.appendChild(stat("引用の検証", "保存時に検証済み（再生では原文を持たないため再検証しません）"));
+      if (rec.omitted_requirements) sum.appendChild(stat("省略した要件", fmt(rec.omitted_requirements) + " 件（同梱では件数だけ残しています）"));
+    }
     sum.appendChild(stat("矛盾", fmt(s.contradictions) + " 件"));
     sum.appendChild(stat("Governor の拒否", fmt(s.denied) + " 件"));
     sum.appendChild(stat("見積もり費用", "約 " + (Number(s.est_cost_micro_jpy || 0) / 1e6).toFixed(2) + " 円"));
@@ -361,6 +365,10 @@
     for (const [k, v] of rows) { dl.appendChild(el("dt", { text: k })); dl.appendChild(el("dd", { text: v })); }
     dl.appendChild(el("dt", { text: "原文の1文" }));
     dl.appendChild(el("dd", null, [el("mark", { text: r.span.original_span })]));
+    if (r.span.quote_clipped) {
+      dl.appendChild(el("dt", { text: "引用の長さ" }));
+      dl.appendChild(el("dd", { text: "同梱の記録のため80字までに切り詰めています（位置は元の文のものです）" }));
+    }
     $("source").hidden = false;
     $("source-close").focus();
   }
