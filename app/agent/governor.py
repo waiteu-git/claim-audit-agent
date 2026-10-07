@@ -45,6 +45,7 @@ from app.contracts import (
     ModelPurpose,
     ModelResponse,
     ObsCode,
+    ObsOutcome,
     Phase,
     PolicyId,
     ReqState,
@@ -397,15 +398,34 @@ class Governor:
             self.state.req_calls[req_id] = self.state.calls_used(req_id) + 1
         self.denial_streak = 0
         self.last_denial = self.last_denied_tool = None
+        self._emit_replan_if_changed(call, name)
         self.trace.emit(
-            self.phase, Actor.PLANNER, TraceType.TOOL_REQUEST, name=name, req_id=req_id,
-            args_digest=digest(call.args.model_dump(mode="json")),
+            self.phase, Actor.GOVERNOR if self.phase is Phase.AUTORUN else Actor.PLANNER, TraceType.TOOL_REQUEST, name=name,
+            req_id=req_id, args_digest=digest(call.args.model_dump(mode="json")),
         )  # fmt: skip
         self.trace.emit(
             self.phase, Actor.GOVERNOR, TraceType.POLICY_DECISION, name=name, req_id=req_id,
             policy_id=PolicyId.PHASE, decision=Decision.ALLOW, reason_code="OK",
         )  # fmt: skip
         return Admission(call=call, premise_obs_id=self._premise(call))
+
+    def _emit_replan_if_changed(self, call: ToolCall, name: str) -> None:
+        """方針変更の自動検出（設計 §3 c）。直前の検査（run_check）が不確定だった後に、新しい材料を取りに行く（fetch_link）呼び出しが
+        許可されたら、コードが replan の印を残す。モデルの申告ではなく、観測と許可された呼び出しの並びだけで決める。
+        印は観測の id と符号（例 TERMS_ABSENT）を指すので、画面は「何が不確定だったから次の手を変えたか」を並べて見せられる。"""
+        obs = self.state.observations
+        prev = obs[-1] if obs else None
+        if prev is None or call.name is not ToolName.FETCH_LINK:
+            return
+        if prev.tool is not ToolName.RUN_CHECK or prev.outcome is not ObsOutcome.INCONCLUSIVE:
+            return
+        attrs: dict[str, bool | int | str] = {"after": prev.tool.value, "next": name}
+        if prev.checker is not None:
+            attrs["checker"] = prev.checker.value
+        self.trace.emit(
+            self.phase, Actor.GOVERNOR, TraceType.REPLAN, name=name, req_id=prev.req_id, obs_id=prev.obs_id,
+            reason_code=prev.code.value, attrs=attrs,
+        )  # fmt: skip
 
     # ---- 個別の検査 ----------------------------------------------------------------------------
     def _check_args(self, call: ToolCall) -> Admission | None:

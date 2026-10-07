@@ -350,13 +350,37 @@ def test_anchor_text_is_untrusted_cleaned_bounded_and_does_not_decide_the_role()
 
 
 def test_login_role_comes_from_the_href_rule_only_and_is_conservative():
-    d = san(
+    html = (
         '<a href="/login">ログイン</a><a href="/users/sign_in">サインイン</a><a href="/docs/auth">認証の説明</a>'
         '<a href="https://accounts.example.invalid/">アカウント</a><a href="/docs/login-guide">ガイド</a><a href="/session/new">新規</a><a href="/rules">規約</a>'
     )
-    assert [lk.role for lk in d.links] == [
+    # 要項側の文書: docs はコードでは付けない（役割は Reader の提案）。ログインの判定は変わらず href の規則だけ
+    assert [lk.role for lk in san(html).links] == [
         LinkRole.LOGIN, LinkRole.LOGIN, LinkRole.OTHER, LinkRole.LOGIN, LinkRole.OTHER, LinkRole.LOGIN, LinkRole.OTHER,
     ]  # fmt: skip
+    # 提出物の文書: 案内らしいパス（/docs/…）は docs（第5弾）。ログインが先
+    assert [lk.role for lk in san(html, role=DocRole.SUBMISSION).links] == [
+        LinkRole.LOGIN, LinkRole.LOGIN, LinkRole.DOCS, LinkRole.LOGIN, LinkRole.DOCS, LinkRole.LOGIN, LinkRole.OTHER,
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://x.example.invalid/docs/", True),
+        ("https://x.example.invalid/app/Guide.html", True),
+        ("https://x.example.invalid/help/getting-started", True),
+        ("https://x.example.invalid/faq", True),
+        ("https://x.example.invalid/", False),
+        ("https://x.example.invalid/documentary", False),  # 区間の一致だけ（部分一致にしない）
+        ("https://docs.example.invalid/", False),  # ホスト名では決めない
+        ("https://x.example.invalid/app/?docs=1", False),  # クエリでは決めない
+    ],
+)
+def test_docs_role_comes_from_the_href_path_segments_only(url, expected):
+    from app.ingest.sanitize import href_looks_like_docs
+
+    assert href_looks_like_docs(url) is expected
 
 
 @pytest.mark.parametrize(

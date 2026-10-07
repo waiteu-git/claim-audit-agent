@@ -128,6 +128,48 @@ def standard_planner() -> ScriptedPort:
         model_id="scripted-planner",
     )
 
+# ---- 案内ページを辿る場面（AUTORUN の後に Planner が方針を変える）の世界 -----------------------------------------
+GUIDE_SENTENCE = "提出物には審査員向けの使い方の案内を記載すること。"
+GUIDE_URL = f"https://{SVC_HOST}/fx/defect/guide/"
+GUIDE_SPEC_HTML = SPEC_HTML.replace("</ul>", f"<li>{GUIDE_SENTENCE}</li></ul>")
+GUIDE_SUBMISSION_HTML = (
+    "<html><body><h1>作品の説明</h1><p>" + ("これは架空の作品の説明文です。" * 12) + "</p>"
+    '<p><a href="/fx/defect/guide/">操作ガイド</a></p></body></html>'
+)
+GUIDE_PAGE_WITH_ACCOUNT = (
+    "<html><body><h1>操作ガイド</h1><p>審査用のテスト用アカウントは次のとおりです。ID: judge01 / パスワード: sample-pass-1</p>"
+    "<p>" + ("地図と一覧から落とし物を探せる、架空のアプリの説明です。" * 4) + "</p></body></html>"
+)
+GUIDE_PAGE_WITHOUT_ACCOUNT = (
+    "<html><body><h1>操作ガイド</h1><p>" + ("地図と一覧から落とし物を探せる、架空のアプリの説明です。" * 6) + "</p></body></html>"
+)
+
+
+def guide_fetch(*, guide_page: str | None = GUIDE_PAGE_WITH_ACCOUNT, submission_html: str = GUIDE_SUBMISSION_HTML) -> RoutedFetch:
+    """standard_fetch に、案内の要件（GUIDE_SENTENCE）と、提出物の説明から案内ページ（/fx/defect/guide/）へのリンクを足した世界。"""
+    routes: dict = {
+        (SPEC_URL, FetchMode.PAGE): make_result(SPEC_URL, body=GUIDE_SPEC_HTML),
+        (SUB_URL, FetchMode.PAGE): make_result(SUB_URL, body=submission_html),
+        (SUB_URL, FetchMode.PROBE): make_result(
+            SUB_URL, redirects=(redirect(frm=SUB_URL, location="/fx/defect/login/"),), final_url=LOGIN_URL, body=LOGIN_HTML
+        ),
+    }
+    if guide_page is not None:
+        routes[(GUIDE_URL, FetchMode.PAGE)] = make_result(GUIDE_URL, body=guide_page)
+    return RoutedFetch(routes)
+
+
+GUIDE_REQS = (*STANDARD_REQS, raw(GUIDE_SENTENCE, Kind.REQUIRED, CheckClass.GUIDANCE_PRESENT))
+
+
+def guide_reader() -> ScriptedPort:
+    return ScriptedPort([reader_reply(*GUIDE_REQS)], model_id="scripted-reader")
+
+
+def planner_after_autorun() -> ScriptedPort:
+    """AUTORUN が提出URLの probe・認証壁・字数をすべて済ませた後の Planner の台本（残る要件が無いので finish だけ）。"""
+    return ScriptedPort([reply_calls(("finish", {}))], model_id="scripted-planner")
+
 
 class FakeClock:
     """進めた分だけ進む時計（壁時計の上限のテスト用）。"""

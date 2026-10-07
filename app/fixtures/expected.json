@@ -202,6 +202,54 @@
    }
   }
  ],
+ "guide_variants": [
+  {
+   "variant": "g1found",
+   "prefix": "/fx/g1found/",
+   "note": "D2＋案内ページにアカウントの案内あり（辿れば推定適合）",
+   "description_chars": 700,
+   "defects": [
+    {
+     "id": "D2",
+     "type": "verdict",
+     "quote": "デプロイしたURLは、審査員がログインせずに開ける状態にすること。",
+     "label": "不適合",
+     "checker": "auth_wall"
+    }
+   ],
+   "injection": null,
+   "guards": [
+    {
+     "id": "G1",
+     "quote": "ログインが必要な提出物には、審査員が使えるテスト用アカウントの案内を説明に記載すること。",
+     "label": "推定適合"
+    }
+   ]
+  },
+  {
+   "variant": "g2missing",
+   "prefix": "/fx/g2missing/",
+   "note": "D2＋案内ページにも案内なし（D5）",
+   "description_chars": 700,
+   "defects": [
+    {
+     "id": "D2",
+     "type": "verdict",
+     "quote": "デプロイしたURLは、審査員がログインせずに開ける状態にすること。",
+     "label": "不適合",
+     "checker": "auth_wall"
+    },
+    {
+     "id": "D5",
+     "type": "verdict",
+     "quote": "ログインが必要な提出物には、審査員が使えるテスト用アカウントの案内を説明に記載すること。",
+     "label": "不適合",
+     "checker": "contains_terms"
+    }
+   ],
+   "injection": null
+  }
+ ],
  "reader_oracle": [
   {
    "quote": "作品は10月15日 23:59（日本時間）までに提出すること。",
@@ -250,6 +298,12 @@
    "kind": "必須",
    "check_class": "none",
    "slot": "締切"
+  },
+  {
+   "quote": "ログインが必要な提出物には、審査員が使えるテスト用アカウントの案内を説明に記載すること。",
+   "kind": "必須",
+   "check_class": "guidance_present",
+   "slot": "なし"
   }
  ]
 }

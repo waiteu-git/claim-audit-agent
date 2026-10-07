@@ -164,26 +164,26 @@ def test_checkers_do_no_io(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# G3 の差し込み口（今回は実装しない。シグネチャだけ）
+# 第5弾で実装した部分の窓口（シグネチャの固定。中身は tests/test_contains_terms.py・tests/test_autorun.py）
 # ---------------------------------------------------------------------------
-def test_g3_pieces_are_stubs_with_stable_signatures():
-    r = req(C.CheckClass.LEAK, "R5")
-    doc = sub_doc()
-    # leak_scan は第3弾で実装した（tests/test_leak_scan.py）。残りの差し込み口は contains_terms と AUTORUN
+def test_contains_terms_and_autorun_are_implemented_with_stable_signatures():
+    r = req(C.CheckClass.GUIDANCE_PRESENT, "R5")
+    doc = sub_doc("審査用のテスト用アカウントは次のとおりです。")
     assert check_leak_scan(r, [doc], "O1").checker is C.Checker.LEAK_SCAN
-    with pytest.raises(NotImplementedError):
-        check_contains_terms(r, doc, "O1")
-    with pytest.raises(NotImplementedError):
-        run_checker(C.Checker.CONTAINS_TERMS, r, CheckContext(docs={"D3": doc}), "O1")
+    assert check_contains_terms(r, doc, "O1").checker is C.Checker.CONTAINS_TERMS
+    assert run_checker(C.Checker.CONTAINS_TERMS, r, CheckContext(docs={"D3": doc}), "O1").code is C.ObsCode.TERMS_FOUND
     assert list(inspect.signature(check_leak_scan).parameters) == ["req", "docs", "obs_id"]
     assert list(inspect.signature(check_contains_terms).parameters) == ["req", "doc", "obs_id"]
     assert inspect.iscoroutinefunction(autorun)
-    assert list(inspect.signature(autorun).parameters) == ["requirements", "ctx", "fetch", "submission_url", "next_obs_id"]
+    params = list(inspect.signature(autorun).parameters)
+    assert params[:5] == ["requirements", "ctx", "fetch", "submission_url", "next_obs_id"]  # 第2弾からの引数は変えない（後ろに足しただけ）
+    assert params[5:] == ["defer_terms", "max_steps", "plan", "execute"]
 
 
-async def test_autorun_stub_raises_until_g3():
-    with pytest.raises(NotImplementedError):
-        await autorun([], CheckContext(docs={}), FakeFetchPort(make_result()), submission_url=SUB_URL, next_obs_id=lambda: "O1")
+async def test_autorun_with_nothing_to_check_returns_no_observation_and_touches_no_network():
+    fetch = FakeFetchPort(make_result())
+    assert await autorun([], CheckContext(docs={}), fetch, submission_url=SUB_URL, next_obs_id=lambda: "O1") == ()
+    assert fetch.calls == []
 
 
 # ---------------------------------------------------------------------------

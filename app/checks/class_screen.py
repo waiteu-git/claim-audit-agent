@@ -13,7 +13,7 @@ check_class は Reader（モデル）が付ける。モデルが取り違えて�
 import re
 import unicodedata
 
-from app.contracts import CheckClass
+from app.contracts import CHECK_CLASS_CHECKER, CheckClass, Kind, VerifiedRequirement
 
 _I = re.IGNORECASE
 
@@ -78,3 +78,15 @@ def quote_supports_class(check_class: CheckClass, quote: str) -> bool:
     if pattern is None:
         return False
     return pattern.search(unicodedata.normalize("NFKC", quote)) is not None
+
+
+def is_checkable_requirement(req: VerifiedRequirement) -> bool:
+    """検査の種類があり、検証済みの引用がその話題に触れている要件か。推測・引用なし・検査できないクラスは False。
+
+    RunState.is_checkable（Governor の許可）と AUTORUN の計画が、同じ関数で「検査できる」を決める（同じ事実を2か所で判定しない）。
+    """
+    if req.kind is Kind.SPECULATIVE or req.span is None:
+        return False
+    if CHECK_CLASS_CHECKER[req.check_class] is None:
+        return False
+    return quote_supports_class(req.check_class, req.span.original_span)

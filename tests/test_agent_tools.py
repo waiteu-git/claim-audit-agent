@@ -89,11 +89,18 @@ async def test_requirement_with_a_conclusive_observation_becomes_done():
     assert state.req_state(state.req("R2")) is ReqState.OPEN
 
 
-async def test_unimplemented_checker_becomes_an_inconclusive_observation_not_an_exception():
-    # 案内の話題の引用を持つ要件（G3 の差し込み口 contains_terms を呼ぶ。leak_scan は第3弾で実装済み）
+async def test_unimplemented_checker_becomes_an_inconclusive_observation_not_an_exception(monkeypatch):
+    # 未実装の差し込み口（NotImplementedError）は、例外にせず不確定の観測（確認不能の材料）にする。今は全チェッカーが実装済みなので、
+    # 差し込み口が増えた時の備えとして、チェッカーが NotImplementedError を投げる状況を作って確かめる
+    import app.agent.tools as tools
+
+    def not_yet(*a, **k):
+        raise NotImplementedError("まだ無い")
+
     state2, gov2 = make_world(reqs=(raw("提出物には審査員向けの使い方の案内を記載すること。", Kind.REQUIRED, CheckClass.GUIDANCE_PRESENT),),
                               spec_text="応募要項\u001e提出物には審査員向けの使い方の案内を記載すること。")
     reg2 = ToolRegistry(state=state2, governor=gov2, fetch=RoutedFetch({}))
+    monkeypatch.setattr(tools, "run_checker", not_yet)
     gov2.begin_turn(1, 8, gov2.allowed_tools())
     res = await reg2.execute(call(gov2, "run_check", checker="contains_terms", req_id="R1"))
     assert res.code is ObsCode.ERROR and res.observation.outcome is ObsOutcome.INCONCLUSIVE

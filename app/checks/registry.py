@@ -3,7 +3,7 @@
 ToolRegistry（T7）はここだけを呼ぶ。チェッカーが使う値（字数の上限など）は引数で受けず、要件の検証済み引用から取る。
 文書（SanitizedDoc）と保存済みの http_probe 観測は CheckContext で渡す。
 
-実装済み: text_length・auth_wall・cloud_run_signature。差し込み口だけ（NotImplementedError）: leak_scan・contains_terms（G3）。
+実装済み: text_length・auth_wall・cloud_run_signature・leak_scan・contains_terms（未実装のチェッカーは NotImplementedError を投げ、呼び出し側が不確定の観測にする）。
 """
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass

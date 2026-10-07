@@ -33,11 +33,13 @@ from tests.agent_support import (
     PRESET,
     SPEC_URL,
     FakeClock,
+    guide_fetch,
+    guide_reader,
     RoutedFetch,
     raw,
     reader_reply,
     standard_fetch,
-    standard_planner,
+    planner_after_autorun,
     standard_reader,
 )
 from tests.factories import seal
@@ -55,7 +57,7 @@ async def go(mode=InspectMode.ROUTER, *, fetch=None, reader=None, planner=None, 
         PRESET,
         fetch=fetch or standard_fetch(),
         reader_model=reader or standard_reader(),
-        planner_model=planner if planner is not None else (standard_planner() if mode is InspectMode.PLANNER else None),
+        planner_model=planner if planner is not None else (planner_after_autorun() if mode is InspectMode.PLANNER else None),
         inspect_mode=mode,
         **kw,
     )
@@ -86,7 +88,7 @@ async def test_full_offline_run_from_reader_to_json_and_html(mode):
 async def test_phases_are_entered_in_order_and_every_event_belongs_to_the_run():
     res = await go()
     phases = [e.name for e in res.events if e.type is F.PHASE_ENTER]
-    assert phases == ["ACQUIRE", "READ", "INSPECT", "ADJUDICATE", "REPORT", "DONE"]
+    assert phases == ["ACQUIRE", "READ", "AUTORUN", "INSPECT", "ADJUDICATE", "REPORT", "DONE"]
     assert [e.seq for e in res.events] == sorted(e.seq for e in res.events)
     assert {e.run_id for e in res.events} == {res.record.run_id}
     assert [e.req_id for e in res.events if e.type is F.VERDICT] == ["R1", "R2"]
@@ -173,11 +175,15 @@ async def test_reader_failure_is_a_degraded_result_with_no_requirements():
     assert rec.summary.requirements_total == 0
 
 
-async def test_planner_failure_marks_unchecked_requirements_as_transient():
-    res = await go(InspectMode.PLANNER, planner=ScriptedPort([AppError(ErrorCode.RETRYABLE, "x")]))
+async def test_planner_failure_keeps_what_autorun_decided_and_marks_the_rest_as_transient():
+    """Planner が落ちても、AUTORUN が決めた要件（字数・認証壁）の判定は証拠のまま残る。AUTORUN で決まらなかった要件（案内ページを
+    辿る前の contains_terms）だけが、理由コード TRANSIENT の確認不能になる。"""
+    res = await go(InspectMode.PLANNER, planner=ScriptedPort([AppError(ErrorCode.RETRYABLE, "x")]), fetch=guide_fetch(), reader=guide_reader())
     rec = res.record
     assert rec.degraded_reason is DegradedReason.MODEL_FAILURE
-    assert {v.reason_code for v in rec.verdicts} == {UnverifiableReason.TRANSIENT}
+    v = verdicts(res)
+    assert v["R1"].label is L.FAIL and v["R2"].label is L.FAIL  # AUTORUN の検査結果は、Planner の失敗で消えない
+    assert v["R3"].label is L.UNVERIFIABLE and v["R3"].reason_code is UnverifiableReason.TRANSIENT
 
 
 async def test_fatal_config_error_propagates_instead_of_a_misleading_report():
@@ -248,11 +254,9 @@ async def test_a_wrong_check_class_from_the_model_never_produces_a_machine_verif
 
 
 async def test_a_planner_cannot_wash_a_failure_by_marking_the_requirement_unverifiable():
-    steps = [reply_calls(("http_probe", {"target": "SUBMISSION_URL", "reason": "r"})),
-             reply_calls(("run_check", {"checker": "auth_wall", "req_id": "R2"})),
-             reply_calls(("mark_unverifiable", {"req_id": "R2", "reason_code": "HUMAN_ONLY"})),  # 検査済みの要件への印は拒否
+    """AUTORUN が不適合を観測した後、Planner が「確認不能」の印で洗おうとしても通らない（判定は観測だけで決まる）。"""
+    steps = [reply_calls(("mark_unverifiable", {"req_id": "R2", "reason_code": "HUMAN_ONLY"})),  # 決着済みの要件への印は拒否
              reply_calls(("mark_unverifiable", {"req_id": "R1", "reason_code": "NO_EVIDENCE"})),  # コード専用の理由は拒否
-             reply_calls(("run_check", {"checker": "text_length", "req_id": "R1"})),
              reply_calls(("finish", {}))]
     res = await go(InspectMode.PLANNER, planner=ScriptedPort(steps))
     v = verdicts(res)
@@ -260,17 +264,15 @@ async def test_a_planner_cannot_wash_a_failure_by_marking_the_requirement_unveri
     assert res.record.summary.denied == 2 and not res.governor.state.marks
 
 
-async def test_planner_cannot_skip_the_auth_check_by_marking_it_needs_auth_first():
-    steps = [reply_calls(("http_probe", {"target": "SUBMISSION_URL", "reason": "r"})),
-             reply_calls(("mark_unverifiable", {"req_id": "R2", "reason_code": "NEEDS_AUTH"})),  # 前提の観測はあるが、検査を省く印は拒否
-             reply_calls(("run_check", {"checker": "text_length", "req_id": "R1"})),
-             reply_calls(("run_check", {"checker": "auth_wall", "req_id": "R2"})),
+async def test_planner_cannot_skip_the_auth_check_it_can_only_see_that_autorun_already_ran_it():
+    """認証壁の検査は AUTORUN が必ず走らせる。Planner が「NEEDS_AUTH」の印で省こうとしても、不適合は洗えない（S-03）。"""
+    steps = [reply_calls(("mark_unverifiable", {"req_id": "R2", "reason_code": "NEEDS_AUTH"})),
              reply_calls(("finish", {}))]
     res = await go(InspectMode.PLANNER, planner=ScriptedPort(steps))
     v = verdicts(res)
-    assert v["R2"].label is L.FAIL and v["R1"].label is L.FAIL  # 不適合は洗えない（S-03）
-    # 第3弾: 検査前の要件しか無い間は mark_unverifiable を許可リストに出さない（CHECK_FIRST に当たる前に TOOL_NOT_ALLOWED）
-    assert [e.reason_code for e in res.events if e.decision is not None and e.decision.value == "deny"] == ["TOOL_NOT_ALLOWED"]
+    assert v["R2"].label is L.FAIL and v["R1"].label is L.FAIL
+    assert [e.obs_id for e in res.events if e.type is F.TOOL_RESULT and e.name == "run_check"] == ["O2", "O3"]  # 検査は AUTORUN の中で済んでいる
+    assert {e.phase for e in res.events if e.type is F.TOOL_REQUEST and e.name == "run_check"} == {P.AUTORUN}
     assert not res.governor.state.marks
 
 
@@ -278,10 +280,7 @@ async def test_a_valid_planner_mark_on_a_non_checkable_requirement_is_reported_w
     reader = standard_reader()
     reader._steps[0] = reader_reply(*(raw(LEN_SENTENCE, Kind.REQUIRED, CheckClass.LENGTH_LIMIT), raw(AUTH_SENTENCE, Kind.REQUIRED, CheckClass.AUTH_WALL),
                                       raw(LANG_SENTENCE, Kind.REQUIRED, CheckClass.NONE)))
-    steps = [reply_calls(("http_probe", {"target": "SUBMISSION_URL", "reason": "r"})),
-             reply_calls(("mark_unverifiable", {"req_id": "R3", "reason_code": "NEEDS_AUTH"})),
-             reply_calls(("run_check", {"checker": "text_length", "req_id": "R1"})),
-             reply_calls(("run_check", {"checker": "auth_wall", "req_id": "R2"})),
+    steps = [reply_calls(("mark_unverifiable", {"req_id": "R3", "reason_code": "NEEDS_AUTH"})),  # 前提の観測は AUTORUN の probe
              reply_calls(("finish", {}))]
     res = await go(InspectMode.PLANNER, planner=ScriptedPort(steps), reader=reader)
     v = verdicts(res)
@@ -294,8 +293,8 @@ async def test_hijacked_planner_leaves_a_partial_but_truthful_report():
     res = await go(InspectMode.PLANNER, planner=ScriptedPort(steps))
     rec = res.record
     assert (rec.status, rec.degraded_reason) == (RunStatus.DEGRADED, DegradedReason.DENIAL_STREAK)
-    assert rec.summary.denied == 3 and rec.observations == ()
-    assert {v.label for v in rec.verdicts} == {L.UNVERIFIABLE}  # 何も検査していないので、適合とは言わない
+    assert rec.summary.denied == 3 and len(rec.observations) == 3  # 乗っ取られても、AUTORUN の観測（probe と2つの検査）は残る
+    assert {v.label for v in rec.verdicts} == {L.FAIL}  # 観測がそのまま判定になる。Planner が何を言っても適合にはならない
     assert L.PASS not in {v.label for v in rec.verdicts}
 
 

@@ -1,8 +1,9 @@
-"""1実行のオーケストレーション: ACQUIRE → READ → INSPECT → ADJUDICATE → REPORT（設計 §3 の縦1本。AUTORUN・PERSIST は G3 以降）。
+"""1実行のオーケストレーション: ACQUIRE → READ → AUTORUN → INSPECT → ADJUDICATE → REPORT（設計 §3 の縦1本。PERSIST は G3 以降）。
 
   ACQUIRE    プリセットの URL を FetchPort で取得・洗浄（acquire.py）
   READ       Reader が要件を抜き、QuoteChecker が引用を検証（reader.py）
-  INSPECT    Planner または router が、同じ Governor・同じツールで検査（planner.py・tools.py）
+  AUTORUN    前提がコード判定で揃う検査を必ず走らせる。モデル無し・Planner／router の両モードで同じ（autorun_phase.py）
+  INSPECT    Planner または router が、AUTORUN で決まらなかった要件を、同じ Governor・同じツールで検査（planner.py・tools.py）
   ADJUDICATE 判定表（adjudicate.py）。モデルの出力は観測・印の形でしか入らず、判定を書けるのはここだけ
   REPORT     引用の最終再検証 → RunRecord
 
@@ -18,6 +19,7 @@ from datetime import UTC, datetime
 
 from app.adjudicate import adjudicate, find_contradictions
 from app.agent.acquire import acquire
+from app.agent.autorun_phase import run_autorun_phase
 from app.agent.budget import BudgetMeter, Clock
 from app.agent.governor import Governor
 from app.agent.planner import InspectMode, run_planner, run_router
@@ -32,6 +34,7 @@ from app.contracts import (
     DegradedReason,
     FetchPort,
     Kind,
+    PageClass,
     Phase,
     Preset,
     ReqState,
@@ -135,12 +138,20 @@ async def run_audit(
 
     gov.enter(Phase.READ)
     checker: QuoteChecker | None = None
+    proposals: dict[str, PageClass] = {}
     if not gov.stopped:
         read = await read_spec(state, gov, reader_model)
         checker = read.checker
+        proposals = read.page_class_proposals
     if checker is None:
         checker = QuoteChecker(DocIndex(()))
     if gov.check_stop() and gov.status is RunStatus.ABORTED:
+        return result(tuple(state.requirements), ())
+
+    gov.enter(Phase.AUTORUN)
+    if not gov.stopped and state.requirements:
+        await run_autorun_phase(state, gov, registry, fetch, page_class_proposals=proposals)
+    if gov.status is RunStatus.ABORTED:
         return result(tuple(state.requirements), ())
 
     gov.enter(Phase.INSPECT)

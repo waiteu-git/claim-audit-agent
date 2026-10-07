@@ -7,10 +7,10 @@
 """
 from dataclasses import dataclass, field
 
-from app.checks.class_screen import quote_supports_class
+from app.checks.class_screen import is_checkable_requirement
 from app.contracts import (
-    CHECK_CLASS_CHECKER,
     CheckClass,
+    Checker,
     DocMeta,
     DocRole,
     Kind,
@@ -114,12 +114,8 @@ class RunState:
         return ReqState.OPEN
 
     def is_checkable(self, req: VerifiedRequirement) -> bool:
-        """検査の種類があり、引用がその話題に触れている（判定表の関門と同じ関数）。推測・引用なしは検査できない。"""
-        if req.kind is Kind.SPECULATIVE or req.span is None:
-            return False
-        if CHECK_CLASS_CHECKER[req.check_class] is None:
-            return False
-        return quote_supports_class(req.check_class, req.span.original_span)
+        """検査の種類があり、引用がその話題に触れている（判定表の関門・AUTORUN の計画と同じ関数）。推測・引用なしは検査できない。"""
+        return is_checkable_requirement(req)
 
     def can_run_check(self, req: VerifiedRequirement) -> bool:
         """今この実行で run_check が意味のある観測を返せるか。検査できる要件でも、材料（提出URL・提出物の文書）が無ければ
@@ -142,6 +138,15 @@ class RunState:
     def ready_to_run_check(self, req: VerifiedRequirement) -> bool:
         """今すぐ run_check して意味のある観測が返る（材料があり、必要な probe が済んでいる）。"""
         return self.can_run_check(req) and not self.needs_probe_first(req)
+
+    def next_terms_doc(self, req_id: str) -> str | None:
+        """contains_terms がまだ調べていない提出物の文書（取得順。提出物の説明ページ → 辿った案内ページ）。無ければ None。
+        どの文書を調べるかはコードが決める（Planner は文書を指せない）。"""
+        done = {o.doc_id for o in self.check_observations(req_id) if o.checker is Checker.CONTAINS_TERMS and o.doc_id is not None}
+        for d in self.docs.values():
+            if d.role is DocRole.SUBMISSION and d.doc_id not in done:
+                return d.doc_id
+        return None
 
     def calls_used(self, req_id: str) -> int:
         return self.req_calls.get(req_id, 0)

@@ -11,10 +11,11 @@
   net/                  SafeFetch（外向き HTTP の唯一の出口）: urlcheck・ipcheck・resolver・backend・decode・safefetch・vectors
   ingest/               sanitize（取得物 → SanitizedDoc）・css_hide・inject_scan
   quotes/               DocIndex・QuoteChecker（引用の逐語照合。「検証済み」の印を発行できるのはここだけ）
-  checks/               http_probe・auth_wall・text_length・cloud_run_signature・html_signals・class_screen・registry・leak_scan
-                        （contains_terms・autorun は差し込み口だけ＝G3）
+  checks/               http_probe・auth_wall・text_length・cloud_run_signature・html_signals・class_screen・registry・leak_scan・
+                        contains_terms（可視テキストの語の有無。固定辞書）・autorun（AUTORUN の計画と実行。第5弾）
   adjudicate.py         判定表（要件×観測 → Verdict。判定を書けるのはこのコードだけ）と、要項間の矛盾（find_contradictions）
-  agent/                reader・planner（Planner ループと router）・governor・budget・tools・trace・state・acquire・run・report（第2弾 G2）
+  agent/                reader・planner（Planner ループと router）・governor・budget・tools・trace・state・acquire・autorun_phase・run・report
+                        （第2弾 G2。autorun_phase は第5弾: READ の後・INSPECT の前に、前提が揃う検査を Governor 経由で必ず走らせる）
   cli.py                ローカル CLI（`python -m app.cli <preset>`）。agent と同じく他から import されない
   quota.py              予約→精算・審査員コード・匿名枠・二重ラッチ・ADMIT ゲート。保存先は StatePort（InMemoryState／state_firestore.py）
   state_firestore.py    StatePort の Firestore 実装（本番。実接続はテストしない）

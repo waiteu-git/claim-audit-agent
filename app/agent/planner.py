@@ -284,10 +284,10 @@ async def run_router(state: RunState, gov: Governor, registry: ToolRegistry) -> 
             await registry.execute(adm)
 
     pending = gov.pending_checks()
-    needs_probe = any(
+    needs_probe = "SUBMISSION_URL" not in state.probed_targets and any(
         (r := state.req(rid)) is not None and r.check_class in (CheckClass.AUTH_WALL, CheckClass.RUNTIME_SIGNATURE)
         for rid in pending
-    )
+    )  # AUTORUN が済ませた probe は繰り返さない（同じ呼び出しの繰り返しは P-DUP-01 で拒否される）
     if needs_probe and state.preset.submission_url:
         await call(
             ToolCall(

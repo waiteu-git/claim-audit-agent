@@ -43,17 +43,8 @@ def scripted_reader() -> ScriptedPort:
 
 
 def scripted_planner() -> ScriptedPort:
-    """Planner の台本: 提出URLの到達検査 → 認証壁 → 字数 → 漏洩 → finish（R2 字数・R3 認証・R4 漏洩）。"""
-    return ScriptedPort(
-        [
-            reply_calls(("http_probe", {"target": "SUBMISSION_URL", "reason": "デプロイURLの到達検査"})),
-            reply_calls(("run_check", {"checker": "auth_wall", "req_id": "R3"})),
-            reply_calls(("run_check", {"checker": "text_length", "req_id": "R2"})),
-            reply_calls(("run_check", {"checker": "leak_scan", "req_id": "R4"})),
-            reply_calls(("finish", {})),
-        ],
-        model_id="scripted-planner",
-    )
+    """Planner の台本: 提出URLの到達検査・認証壁・字数・漏洩は AUTORUN が済ませるので、残る要件は無く finish だけ。"""
+    return ScriptedPort([reply_calls(("finish", {}))], model_id="scripted-planner")
 
 
 def scripted_runner(mode: InspectMode = InspectMode.ROUTER, *, before: Callable | None = None):

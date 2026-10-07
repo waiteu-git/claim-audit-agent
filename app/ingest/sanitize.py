@@ -214,6 +214,28 @@ def href_looks_like_login(url: str) -> bool:
     return len(segs) >= 2 and segs[-2] in ("session", "sessions") and last == "new"
 
 
+# 案内ページらしいパス区間（辿る価値があるリンクの目印）。役割 docs を付けるのはコードで、モデルの申告は要らない
+_DOCS_SEGMENTS = frozenset(
+    {"docs", "doc", "guide", "guides", "help", "manual", "usage", "howto", "how-to", "tutorial", "readme", "faq", "wiki",
+     "getting-started", "gettingstarted", "support"}
+)  # fmt: skip
+
+
+def href_looks_like_docs(url: str) -> bool:
+    """URL が案内ページらしいか（パスの区間が docs・guide・help 等）。リンク表の役割 docs をコードが付ける規則。
+
+    ログインらしい URL は login が先（href_looks_like_login）。docs を付けるのは提出物（role=submission）の文書のリンクだけ
+    （要項側の「よくある質問」への案内を、提出物の案内ページと取り違えて辿らないため。要項側のリンクの役割は Reader の提案）。
+    ここで付けた docs は「辿る価値がある」という目印にすぎず、
+    検査を減らす方向には使わない（contains_terms の結論を、案内ページを辿る前に確定させない側にだけ働く。checks/autorun.py）。
+    """
+    try:
+        path = urlsplit(url).path.lower()
+    except ValueError:
+        return False
+    return any(seg.rsplit(".", 1)[0] in _DOCS_SEGMENTS for seg in path.split("/") if seg)
+
+
 def link_in_scope(href: str, scope: Sequence[UrlPrefix]) -> bool:
     """絶対URLが取得スコープに入るか。取得時の検査（SafeFetch）と同じ定義を使う（validate_url → スコープ照合）。
 
@@ -1435,7 +1457,9 @@ def _safe_url_text(url: str) -> str:
     return "".join(c if _url_char_ok(c) else quote(c.encode("utf-8")) for c in url)
 
 
-def _resolve_links(raw: list[tuple[str, str]], base: str, scope: Sequence[UrlPrefix]) -> tuple[LinkEntry, ...]:
+def _resolve_links(
+    raw: list[tuple[str, str]], base: str, scope: Sequence[UrlPrefix], *, docs_role: bool = False
+) -> tuple[LinkEntry, ...]:
     entries: list[LinkEntry] = []
     seen: set[str] = set()
     own = urlsplit(base)._replace(fragment="").geturl() if base else ""
@@ -1455,7 +1479,7 @@ def _resolve_links(raw: list[tuple[str, str]], base: str, scope: Sequence[UrlPre
         if len(abs_url) > 2048 or abs_url in seen or abs_url == own:
             continue  # 重複・自分自身へのリンク（取得済み）は載せない
         seen.add(abs_url)
-        role = LinkRole.LOGIN if href_looks_like_login(abs_url) else LinkRole.OTHER
+        role = LinkRole.LOGIN if href_looks_like_login(abs_url) else LinkRole.DOCS if docs_role and href_looks_like_docs(abs_url) else LinkRole.OTHER
         entries.append(
             LinkEntry(
                 link_id=f"L{len(entries) + 1}",
@@ -1544,7 +1568,7 @@ def sanitize(
                 base_url = joined
         except ValueError:
             pass
-    links = _resolve_links(out.links, base_url, scope) if is_html else ()
+    links = _resolve_links(out.links, base_url, scope, docs_role=role is DocRole.SUBMISSION) if is_html else ()
 
     last_hop = result.redirects[-1] if result.redirects else None
     unfollowed = last_hop.location if (last_hop is not None and not last_hop.followed) else None

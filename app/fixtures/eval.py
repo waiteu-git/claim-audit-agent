@@ -25,6 +25,7 @@ from app.agent.run import run_audit
 from app.config import Settings
 from app.contracts import (
     CheckClass,
+    FunctionCall,
     Kind,
     ModelRequest,
     ModelResponse,
@@ -81,6 +82,53 @@ class OracleReader:
         )
 
 
+class RulePlanner:
+    """Planner の代わりの規則（ModelPort。LLM ではない）。StateView の JSON だけを見て、決まった手を返す。
+
+    規則: 手順（routes）の残る要件があれば、その手順を実行する（probe が先に要る種類は probe）。検査が「語が無い」で終わった直後に、
+    まだ辿っていない案内ページ（役割 docs・スコープ内）があれば辿る（方針変更）。辿った直後は、同じ要件をもう一度検査する。
+    それ以外は finish。実際の Planner（Gemini）の代わりではなく、「案内ページを辿る Planner」を決定論で再現するための道具で、
+    表では model が rule-planner と出る。実モデルの結果は --live の行（app/fixtures/measure.py）。
+    """
+
+    def __init__(self, model_id: str = "rule-planner", *, follow_docs: bool = True) -> None:
+        self._model_id = model_id
+        self._follow = follow_docs
+        self.calls = 0
+
+    @property
+    def model_id(self) -> str:
+        return self._model_id
+
+    def _decide(self, view: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        allowed = set(view["allowed_tools"])
+        last = view.get("last_observation")
+        if self._follow and last == "TERMS_ABSENT" and "fetch_link" in allowed:
+            for lk in view["links"]:
+                if lk["role"] == "docs" and lk["in_scope"] and not lk["fetched"]:
+                    return "fetch_link", {"link_id": lk["link_id"], "reason": "案内ページを辿る"}
+        for r in view["requirements"]:
+            if r["state"] != "open" or not r["routes"]:
+                continue
+            if r["calls_used"] >= 1 and last != "OK":
+                continue  # 検査済みで、新しい材料（辿ったページ）が無い
+            kind, _, name = r["routes"][0].partition(":")
+            if kind == "http_probe":
+                return "http_probe", {"target": "SUBMISSION_URL", "reason": "提出URLの到達検査"}
+            return "run_check", {"checker": name, "req_id": r["req_id"]}
+        return "finish", {}
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        self.calls += 1
+        name, args = self._decide(json.loads(request.contents))
+        return ModelResponse(
+            model=self._model_id,
+            function_calls=(FunctionCall(name=name, args=args),),
+            usage=Usage(prompt_tokens=estimate_tokens(request.system + request.contents), candidates_tokens=estimate_tokens(name + json.dumps(args))),
+            finish_reason="STOP",
+        )
+
+
 def variant_preset(v: gen.Variant, origin: str = EVAL_ORIGIN) -> Preset:
     host = origin.removeprefix("https://")
     return Preset(
@@ -122,6 +170,14 @@ def score(record: RunRecord, expected: dict[str, Any]) -> dict[str, Any]:
             else:
                 matched_contradictions.add(hit)
                 detected.append(d["id"])
+    false_absent: list[str] = []
+    for g in expected.get("guards", ()):  # 欠陥ではないが、「不適合」と報告してはいけない要件（案内ページに案内が在る＝誤った absent）
+        r = by_quote.get(g["quote"])
+        v = verdicts.get(r.req_id) if r is not None else None
+        if v is not None and v.label is VerdictLabel.FAIL:
+            false_absent.append(g["id"])
+        elif v is None or v.label.value != g["label"]:
+            missed.append(g["id"])
     false_fails = [v.req_id for v in record.verdicts if v.label is VerdictLabel.FAIL and v.req_id not in expected_fail_reqs]
     false_contra = [i for i in range(len(record.contradictions)) if i not in matched_contradictions]
     inj = expected.get("injection")
@@ -136,6 +192,7 @@ def score(record: RunRecord, expected: dict[str, Any]) -> dict[str, Any]:
         "detected": detected,
         "missed": missed,
         "false_positives": len(false_fails) + len(false_contra),
+        "false_absent": len(false_absent),
         "injection_ok": injection_ok,
     }
 

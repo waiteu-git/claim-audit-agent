@@ -21,6 +21,7 @@ from app.checks.http_probe import http_probe
 from app.checks.registry import CheckContext, run_checker
 from app.contracts import (
     Actor,
+    Checker,
     ContentKind,
     DocRole,
     FetchKind,
@@ -160,7 +161,17 @@ class ToolRegistry:
         req = st.req(req_id)
         assert req is not None  # Governor が存在を確かめている
         obs_id = st.next_obs_id()
-        ctx = CheckContext(docs=dict(st.docs), probes=st.probes(), target_doc_id=st.submission_doc_id)
+        target = st.submission_doc_id
+        if checker is Checker.CONTAINS_TERMS:
+            # 案内ページを辿った後は、まだ調べていない提出物の文書へ（語の有無は文書ごとに観測する。調べ尽くしたら不確定で返す）
+            target = st.next_terms_doc(req_id)
+            if target is None and st.check_observations(req_id):
+                return Observation(
+                    obs_id=obs_id, tool=ToolName.RUN_CHECK, checker=checker, req_id=req_id,
+                    code=ObsCode.ERROR, outcome=ObsOutcome.INCONCLUSIVE, facts={"why": "no_unchecked_doc"},
+                )  # fmt: skip
+            target = target or st.submission_doc_id
+        ctx = CheckContext(docs=dict(st.docs), probes=st.probes(), target_doc_id=target)
         try:
             return run_checker(checker, req, ctx, obs_id)
         except NotImplementedError:
