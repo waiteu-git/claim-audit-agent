@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>要項監査エージェント</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>要項監査エージェント</h1>
+    <p class="lead">要項・FAQ から要件を原文の引用つきで取り出し、提出物を実際に検査して、証拠つきで判定します（読み取り専用）。</p>
+  </div>
+  <p id="mode" class="mode mode-unknown" role="status" aria-live="polite">状態を確認しています…</p>
+</header>
+
+<main>
+  <section class="panel" aria-labelledby="h-presets">
+    <h2 id="h-presets">1. 監査する対象を選ぶ</h2>
+    <p class="note">入力欄はありません。用意した3つの対象から選びます（任意の URL は受け付けません）。</p>
+    <div id="presets" class="cards" role="radiogroup" aria-labelledby="h-presets"></div>
+    <div class="actions">
+      <button id="run" type="button" class="primary" disabled>監査を実行</button>
+      <p id="run-note" class="note" aria-live="polite"></p>
+    </div>
+    <p id="judge-note" class="note" hidden></p>
+  </section>
+
+  <section id="result" class="panel" aria-labelledby="h-result" hidden>
+    <h2 id="h-result">2. 結果</h2>
+    <p id="run-mode" class="run-mode" role="status" aria-live="polite"></p>
+    <div id="warning" class="warning" role="alert" hidden></div>
+    <div id="status-note" class="status-note" hidden></div>
+    <div id="summary" class="summary" aria-live="polite"></div>
+    <div id="contradictions" class="contradictions" hidden></div>
+
+    <div class="table-wrap">
+      <table id="reqs">
+        <caption>要件と判定（判定は観測からコードが決めます）</caption>
+        <thead>
+          <tr><th scope="col">ID</th><th scope="col">種別</th><th scope="col">要件（原文の引用）</th><th scope="col">出典</th><th scope="col">判定</th><th scope="col">理由・証拠</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <aside id="source" class="source" aria-labelledby="h-source" hidden>
+      <div class="source-head">
+        <h3 id="h-source">出典</h3>
+        <button id="source-close" type="button">閉じる</button>
+      </div>
+      <dl id="source-body"></dl>
+    </aside>
+
+    <details id="budget-box" class="box">
+      <summary>予算ゲージ（この実行の残り）</summary>
+      <div id="budget" class="budget"></div>
+    </details>
+    <details id="trace-box" class="box">
+      <summary>トレース（<span id="trace-count">0</span> 件）</summary>
+      <ol id="trace" class="trace"></ol>
+    </details>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>判定は観測からコードが決めます。モデルは判定を書けません。サンプルの要項・提出物はすべて架空です。</p>
+</footer>
+</body>
+</html>

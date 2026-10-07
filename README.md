@@ -25,6 +25,17 @@ gcloud run services update claim-audit-agent --project=<PROJECT> --region=asia-n
   （プリセット ID だけを受ける。取得は SafeFetch、モデルは Vertex の Gemini＝`GOOGLE_CLOUD_PROJECT` が要る。テストはフェイクを注入）。
 - 判定（Verdict）を書けるのは `app/adjudicate.py` だけ。`tests/test_agent_run.py` が AST で固定する。
 
+## 第3弾（公開面と UI・フィクスチャ。オフラインでテスト可能な範囲）
+
+- 公開面 S2: `python -m app.web`（`ROLE=fetcher` なら S3 の fetcher）。`/health`・静的 UI（`/`・`/app.js`・`/app.css`）・`/fx/*`（架空フィクスチャ）・
+  `GET /api/status`・`POST /api/run`（プリセット ID だけ。SSE）。`/probe` は持たない（S1 専用）。ライブを開けるのは
+  `LIVE_ENABLED=1` かつキルスイッチ無し、かつ枠（`app/quota.py`）が残っている時だけで、それ以外は同梱の REPLAY（`app/web/replay/`）。
+- フィクスチャ: `app/fixtures/`（架空の「みらいアプリ杯」要項2ページ・提出物3ページ。欠陥 D1〜D4・注入版）。
+  `python -m app.fixtures.gen --check`／`--write`、評価は `python -m app.fixtures.eval`（実 LLM 無し・OracleReader＋router）。
+- 同梱の REPLAY は OracleReader（台本）で作った記録（`reader_model` が `oracle-reader`）。実 Gemini の記録へ置き換えるのは
+  `python -m app.web.replay --import rec.json --preset <id>`（漏洩の走査と契約の検証を通ったものだけ）。
+- 新しい環境変数: `PORT`・`STATE_BACKEND`（memory|firestore。ENV=public では firestore 必須）・`JUDGE_CODE_SHA256`（審査員コードの sha256。コードそのものは置かない）。
+
 ## 開発
 
 - 配置・依存の向きは `app/__init__.py` の docstring が正典（共有の型は `app/contracts.py`、設定と環境変数は `app/config.py`）。

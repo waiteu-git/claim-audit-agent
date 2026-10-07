@@ -9,5 +9,6 @@
   vectors.py    敵対ベクタ（pytest と共用のデータ。通信はしない）
 
 httpcore・ssl・socket を import してよいのはこの package だけ（tests/test_safefetch_layout.py が固定）。
-Gate3 で足すもの: fetcher（S3）へのクライアント実装（FetchPort のもう1つの実装）。
+  fetcher_client.py  RemoteFetch（FetchPort のもう1つの実装。S2 → S3。FETCH_MODE=remote）
+  fetcher_server.py  fetcher（S3）のサーバー入口（ROLE=fetcher。自分の許可リストで SafeFetch をやり直す）
 """
