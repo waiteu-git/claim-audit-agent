@@ -227,8 +227,8 @@
     for (const id of ["summary", "contradictions", "trace", "budget", "source-body"]) clear($(id));
     clear($("reqs").tBodies[0]);
     for (const id of ["warning", "status-note", "contradictions", "source"]) $(id).hidden = true;
-    for (const id of ["quote-band", "replan-band"]) $(id).hidden = true;
-    for (const id of ["quote-band-sum", "quote-examples", "replan-steps", "replan-end"]) clear($(id));
+    for (const id of ["who-band", "quote-band", "replan-band"]) $(id).hidden = true;
+    for (const id of ["who-sum", "quote-band-sum", "quote-examples", "replan-steps", "replan-end"]) clear($(id));
     $("run-mode").textContent = "";
     state.events = [];
     state.traceCount = 0;
@@ -320,9 +320,34 @@
     }
     renderContradictions(rec);
     const events = Array.isArray(rec.events) && rec.events.length ? rec.events : state.events;
+    renderWhoBand(rec, events);
     renderQuoteBand(rec, events);
     renderReplanBand(rec, events);
     renderTable(rec);
+  }
+
+  // ---- 誰が決めたか（実行の内訳）。数字は記録の events・summary から数える。材料の無い記録では帯を出さない ----
+  function renderWhoBand(rec, events) {
+    const s = rec.summary;
+    if (!s || typeof s.est_cost_micro_jpy !== "number" || !Array.isArray(events)) return;
+    const list = events.filter((e) => e && typeof e === "object");
+    if (!list.some((e) => e.phase === "AUTORUN")) return; // AUTORUN の無い古い記録では内訳を言えない
+    const isCheck = (e) => e.type === "tool_result" && (e.name === "run_check" || e.name === "http_probe");
+    const checks = list.filter(isCheck).length;
+    if (!checks) return;
+    const auto = list.filter((e) => isCheck(e) && e.phase === "AUTORUN").length;
+    const modelCalls = list.filter((e) => e.type === "model_call").length;
+    const plannerCalls = list.filter((e) => e.type === "model_call" && e.purpose === "planner").length;
+    const replans = list.filter((e) => e.type === "replan").length;
+    const skipped = list.some((e) => e.type === "autorun" && e.name === "planner_skipped");
+    const cost = "約 " + (s.est_cost_micro_jpy / 1e6).toFixed(2) + " 円";
+    let mid;
+    if (plannerCalls > 0) mid = "Planner（モデル）が" + fmt(plannerCalls) + "手を判断（方針変更 " + fmt(replans) + "回）";
+    else if (skipped) mid = "AUTORUN で全部決まったため、Planner（モデル）は呼ばれていません";
+    else mid = "Planner（モデル）は使っていません";
+    $("who-sum").textContent = "検査 " + fmt(checks) + "件: AUTORUN（コード）が" + fmt(auto) + "件を実行／" + mid +
+      "／モデル呼び出し " + fmt(modelCalls) + "回・見積もり " + cost;
+    $("who-band").hidden = false;
   }
 
   // ---- コードが検証した引用（要約と、モデルの引用をコードが弾いた例）----

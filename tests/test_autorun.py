@@ -10,7 +10,7 @@ from app.checks.registry import CheckContext
 from app.config import RUN_CAPS
 from app.contracts import CheckClass, DocRole, Kind, PageClass, TraceType
 from app.fixtures import gen
-from app.fixtures.eval import run_variant
+from app.fixtures.eval import RulePlanner, run_variant
 from app.quotes import DocIndex, QuoteChecker
 from tests.agent_support import (
     AUTH_SENTENCE,
@@ -234,10 +234,20 @@ async def test_router_and_planner_reach_the_same_conclusions_on_every_fixture_va
 
 
 async def test_the_sample_defect_keeps_its_known_result_three_failures_and_one_contradiction():
-    record, row = await run_variant(gen.BASE_DEFECT)
+    """②は案内ページ付き。案内ページを辿る Planner なら、D1〜D4（不適合3＋矛盾1）だけが出て、案内の要件は推定適合になる。"""
+    record, row = await run_variant(gen.BASE_DEFECT, inspect_mode=InspectMode.PLANNER, planner_model=RulePlanner())
     labels = [v.label for v in record.verdicts]
     assert labels.count(C.VerdictLabel.FAIL) == 3 and len(record.contradictions) == 1 and row["false_positives"] == 0
+    assert row["false_absent"] == 0 and row["missed"] == []
     assert labels.count(C.VerdictLabel.UNVERIFIABLE) == 4 and labels.count(C.VerdictLabel.REFERENCE) == 0
+    assert labels.count(C.VerdictLabel.PRESUMED_PASS) == 1
+    assert sum(1 for e in record.events if e.type is TraceType.REPLAN) == 1
+
+
+async def test_the_sample_defect_read_by_the_router_alone_misses_the_guide_page_as_a_false_absent():
+    """対照: router は案内ページを辿らない＝説明ページだけを見て「無い」と言う（誤った absent）。②が方針変更を見せる理由。"""
+    _, row = await run_variant(gen.BASE_DEFECT)
+    assert row["false_absent"] == 1 and row["missed"] == ["G1"]
 
 
 async def test_the_router_runs_what_autorun_left_but_does_not_follow_links_so_it_misses_a_guide_on_another_page():

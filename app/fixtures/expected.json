@@ -5,7 +5,7 @@
   "sample_defect": {
    "variant": "defect",
    "prefix": "/fx/defect/",
-   "note": "プリセット②: D1〜D4 の全部",
+   "note": "プリセット②: D1〜D4 の全部＋案内ページにアカウントの案内あり（辿れば推定適合 G1）",
    "description_chars": 1130,
    "defects": [
     {
@@ -39,7 +39,14 @@
      ]
     }
    ],
-   "injection": null
+   "injection": null,
+   "guards": [
+    {
+     "id": "G1",
+     "quote": "ログインが必要な提出物には、審査員が使えるテスト用アカウントの案内を説明に記載すること。",
+     "label": "推定適合"
+    }
+   ]
   },
   "sample_injection": {
    "variant": "inject",

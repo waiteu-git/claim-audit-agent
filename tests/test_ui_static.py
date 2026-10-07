@@ -211,3 +211,48 @@ def test_the_ui_explains_that_the_code_decides_and_names_no_other_product_or_dis
     for name, text in UI_FILES.items():
         for word in ("スキル", "他社", "競合", "比較して"):
             assert word not in text, (name, word)
+
+
+# ---- 第6弾: ②の同梱REPLAYの方針変更・「誰が決めたか」の帯 ------------------------------------------------
+def _replay(pid):
+    return json.loads((REPLAY / f"{pid}.json").read_text(encoding="utf-8"))
+
+
+def test_the_bundled_preset_2_replay_contains_a_replan_and_the_guide_page_it_followed():
+    rec = _replay("sample_defect")
+    assert rec["planner_model"] == "rule-planner" and rec["reader_model"] == "oracle-reader"  # 実モデルの記録と偽らない
+    ev = rec["events"]
+    mark = next(e for e in ev if e["type"] == "replan")
+    trigger = next(e for e in ev if e["type"] == "tool_result" and e["obs_id"] == mark["obs_id"])
+    after = [e for e in ev if e["type"] == "tool_result" and e["seq"] > mark["seq"]]
+    again = next(e for e in after[1:] if e["name"] == trigger["name"] and e["req_id"] == mark["req_id"])
+    assert (trigger["reason_code"], mark["name"], again["reason_code"]) == ("TERMS_ABSENT", "fetch_link", "TERMS_FOUND")
+    assert "リンク先" in " ".join(d["label"] for d in rec["docs"])  # 辿った案内ページの文書
+    assert rec["summary"]["verdict_counts"]["不適合"] == 3 and rec["summary"]["contradictions"] == 1  # D1〜D4 は変わらない
+
+
+def test_the_bundled_preset_3_replay_has_no_replan_and_records_that_the_planner_was_skipped():
+    rec = _replay("sample_injection")
+    assert not any(e["type"] == "replan" for e in rec["events"])
+    assert any(e["type"] == "autorun" and e["name"] == "planner_skipped" for e in rec["events"])
+    assert not any(e["type"] == "model_call" and e["purpose"] == "planner" for e in rec["events"])
+
+
+def test_the_who_decided_band_is_computed_from_the_record_and_hidden_when_it_cannot_be():
+    assert 'id="who-band"' in HTML and 'id="who-sum"' in HTML
+    assert re.search(r'<section id="who-band"[^>]*\bhidden\b', HTML)
+    block = JS.split("function renderWhoBand")[1].split("// ---- コードが検証した引用")[0]
+    for text in ("AUTORUN（コード）が", "Planner（モデル）が", "方針変更 ", "モデル呼び出し ", "見積もり ",
+                 "AUTORUN で全部決まったため、Planner（モデル）は呼ばれていません", "planner_skipped"):
+        assert text in block, text
+    assert 'typeof s.est_cost_micro_jpy !== "number"' in block and "!Array.isArray(events)" in block and "if (!checks) return;" in block
+    assert '"who-band"' in JS.split("function resetResult")[1].split("function onMode")[0]
+    for word in ("スキル", "他社", "競合", "比較して"):
+        assert word not in block
+
+
+def test_the_replan_and_who_bands_use_only_text_nodes_and_the_replay_has_no_hidden_text():
+    # 帯の描画は textContent／createTextNode だけ（innerHTML 等は上のテストが全体で禁じる）。同梱の記録に、見えない文字（Cf・制御文字）が無い
+    for pid in ("sample_defect", "sample_injection"):
+        text = (REPLAY / f"{pid}.json").read_text(encoding="utf-8")
+        assert not re.search(r"[​-‏‪-‮⁠-⁤﻿]", text), pid

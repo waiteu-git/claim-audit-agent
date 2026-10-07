@@ -1,7 +1,8 @@
 """REPLAY: 同梱した実行記録（app/web/replay/<preset_id>.json）の読み込みと生成。Vertex・Firestore に依存しない。
 
-同梱の②③は、架空フィクスチャを OracleReader（台本の Reader。実 LLM ではない）＋router でオフライン実行して作った記録で、
-記録の reader_model に "oracle-reader" と残る（画面にも出る＝実モデルの実行と偽らない）。実 Gemini の実行記録で置き換える時は
+同梱の②③は、架空フィクスチャを OracleReader（台本の Reader。実 LLM ではない）＋RulePlanner でオフライン実行して作った記録で、
+記録の reader_model に "oracle-reader"、planner_model に "rule-planner"（決定論の規則 RulePlanner。LLM ではない）と残る
+（画面にも出る＝実モデルの実行と偽らない）。②は案内ページを辿る方針変更（trace の replan）を含む。実 Gemini の実行記録で置き換える時は
 `python -m app.cli <preset> --format json --out rec.json` の出力を `--import` で取り込む（漏洩の走査と契約の検証を通ったものだけ）。
 取り込み時は第三者の原文を縮める（引用・言い換え・トレースの引用は1件80字まで、要件は40件まで。clip_for_bundle）。
 
@@ -22,7 +23,7 @@ from app.agent.run import run_audit
 from app.checks.leak_scan import scan_text
 from app.config import PRESET_IDS, PRESET_SAMPLE_DEFECT, PRESET_SAMPLE_INJECTION, PRESETS, Settings
 from app.contracts import RunMode, RunRecord, serialize_report
-from app.fixtures.eval import OracleReader
+from app.fixtures.eval import OracleReader, RulePlanner
 from app.fixtures.site import FixtureFetch, FixtureSite
 from app.quotes.replay import restore_saved_record
 
@@ -118,7 +119,7 @@ def _step_clock(step: float = 0.04):  # noqa: ANN202
 
 
 async def build_fixture_record(preset_id: str) -> RunRecord:
-    """②③の記録をオフラインで作る（FixtureFetch＋OracleReader＋router。run_id・開始時刻・時計を固定して決定論にする）。"""
+    """②③の記録をオフラインで作る（FixtureFetch＋OracleReader＋RulePlanner。run_id・開始時刻・時計を固定して決定論にする）。"""
     preset = PRESETS[preset_id]
     host = preset.allowed_prefixes[0].host
     fetch = FixtureFetch(FixtureSite.load(), host, preset.allowed_prefixes)
@@ -126,7 +127,8 @@ async def build_fixture_record(preset_id: str) -> RunRecord:
         preset,
         fetch=fetch,
         reader_model=OracleReader(),
-        inspect_mode=InspectMode.ROUTER,
+        planner_model=RulePlanner(),
+        inspect_mode=InspectMode.PLANNER,
         settings=Settings(),
         run_id=f"replay_{preset_id}",
         clock=_step_clock(),

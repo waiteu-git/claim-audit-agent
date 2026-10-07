@@ -38,6 +38,8 @@ def test_expected_json_lists_the_four_defects_for_preset_2_and_the_injection_for
     exp = json.loads(gen.EXPECTED_PATH.read_text(encoding="utf-8"))
     assert [d["id"] for d in exp["presets"]["sample_defect"]["defects"]] == ["D1", "D2", "D3", "D4"]
     assert exp["presets"]["sample_defect"]["injection"] is None
+    assert exp["presets"]["sample_defect"]["guards"][0]["id"] == "G1"  # ②は案内ページに案内が在る（辿れば推定適合）
+    assert "guards" not in exp["presets"]["sample_injection"]
     assert exp["presets"]["sample_injection"]["injection"] == {"visible_min": 2, "hidden_min": 1}
     assert len(exp["variants"]) == 6 and len({v["variant"] for v in exp["variants"]}) == 6
 
