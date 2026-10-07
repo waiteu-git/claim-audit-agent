@@ -95,16 +95,27 @@ def _require_idna_agreement(raw: str, encoded: str) -> None:
     ASCII へ畳まれる文字のうち、2003 とブラウザで結果が割れるものがある（ß→ss・U+2024 や U+FE52 や ⒈ が点を作る、など。
     実測は tests/test_safefetch_adversarial.py A7）。割れたまま通すと、人が開く先と監査が取る先が別になる。
     畳みを「互換文字の正規化（NFKC＋小文字化）だけで説明できるもの」に限り、点の数が変わるもの・それ以外は拒否する。
-    punycode（xn--）になった部分は ASCII の範囲内のホストと衝突しないので対象外。
+    punycode（xn--）になった部分も、元の文字へ戻して同じ基準で確かめる。ASCII のホストとは衝突しないが、標準ライブラリの
+    idna は Unicode の表の版で結果が変わる（10/7 実測: "STRA\u1e9eE" は 3.14 では "strasse"、3.13 では別の xn-- ホストになり、
+    本番の 3.13 だけ検査をすり抜けた）。版に依らず「ブラウザより緩く読まない」を保つため、xn-- も対象にする。
     """
     src_labels = _IDNA_DOTS.split(raw)
     out_labels = encoded.split(".")
     if len(src_labels) != len(out_labels):  # 点でない文字が点に化けた
         raise UrlRejected(UrlReject.HOST_IDNA)
     for src, out in zip(src_labels, out_labels, strict=True):
-        if src.isascii() or out.startswith("xn--"):
+        if src.isascii():
             continue
-        if unicodedata.normalize("NFKC", src).lower() != out.lower():
+        want = unicodedata.normalize("NFKC", src).lower()
+        if out.startswith("xn--"):
+            try:
+                got = out[4:].encode("ascii").decode("punycode")
+            except UnicodeError as e:
+                raise UrlRejected(UrlReject.HOST_IDNA) from e
+            if got != want:
+                raise UrlRejected(UrlReject.HOST_IDNA)
+            continue
+        if want != out.lower():
             raise UrlRejected(UrlReject.HOST_IDNA)
 
 

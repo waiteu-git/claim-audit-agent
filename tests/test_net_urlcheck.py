@@ -224,3 +224,17 @@ def test_normalized_url_is_frozen_value_object():
     assert n.url == f"https://{H}/fx/a?x=1"
     with pytest.raises(AttributeError):
         n.host = "x"  # type: ignore[misc]
+
+
+def test_idna_agreement_is_checked_for_punycode_output_too_independent_of_the_python_version():
+    """回帰（10/7）: 標準ライブラリの idna は Unicode の表の版で結果が変わる。"STRA\\u1e9eE" は 3.14 では "strasse"、3.13 では別の
+    xn-- ホストになり、「xn-- は対象外」だった旧実装は本番の 3.13 だけ検査をすり抜けた。コーデックの出力を直接与えて、版に依らず確かめる。"""
+    from app.net.urlcheck import UrlReject, UrlRejected, _require_idna_agreement
+
+    with pytest.raises(UrlRejected) as e:  # 3.13 のコーデックの出力（元の ẞ を残した別のホスト）
+        _require_idna_agreement("STRAẞE.example.invalid", "xn--strae-301b.example.invalid")
+    assert e.value.code is UrlReject.HOST_IDNA
+    with pytest.raises(UrlRejected):  # punycode として読めない出力は拒否
+        _require_idna_agreement("münchen.example.invalid", "xn--!!.example.invalid")
+    _require_idna_agreement("münchen.example.invalid", "xn--mnchen-3ya.example.invalid")  # 本物の IDN は通す
+    _require_idna_agreement("テスト.example.invalid", "xn--zckzah.example.invalid")  # 日本語のラベルも通す

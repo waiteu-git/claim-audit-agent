@@ -87,7 +87,7 @@ python -m pytest
 ```
 
 外向き通信は `tests/conftest.py` が遮断します。モデルは台本（`ScriptedPort`）、取得は偽の `FetchPort` で置き換えており、Vertex・gcloud・Firestore の実物は使いません。
-動作確認は Python 3.13（`Dockerfile` と同じ）で行います。`xfail` が数件あります（`tests/test_sanitize_adversarial.py` の既知の残り＝HTML 解析の近似の限界）。
+全テストは Python 3.13（`Dockerfile` と同じ系列）と 3.14 の両方で通ることを確認しています。標準ライブラリの版差で結果が変わる部分（`idna` による IDN ホスト名の変換、`html.parser` のコメントの解釈）は、版に依らない形で固定し、どちらの版でも同じ結論（開けない・拒否）になるようにしています。`xfail` が数件あります（`tests/test_sanitize_adversarial.py` の既知の残り＝HTML 解析の近似の限界）。
 
 ## ローカルでの実行
 

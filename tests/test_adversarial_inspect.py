@@ -419,19 +419,25 @@ def test_a9_a_transient_failure_followed_by_a_clean_probe_is_still_a_clean_probe
     assert o.code is C.ObsCode.NO_AUTH_WALL
 
 
+_SUSPECT_ONLY = (C.ObsOutcome.INCONCLUSIVE,)
+# html.parser の版で割れる: 古い版は「<!-->」の中の入力欄が見えず不確定（疑い）、3.13 のセキュリティ更新以降は
+# 空のコメントとして読み、入力欄を見つけて強い壁（FAIL）にする（10/7 に本番と同じ 3.13.16 で実測）。どちらでも「開ける」にはならない
+_SUSPECT_OR_WALL = (C.ObsOutcome.INCONCLUSIVE, C.ObsOutcome.FAIL)
+
+
 @pytest.mark.parametrize(
-    "suspicious",
+    ("suspicious", "allowed_outcomes"),
     [
-        make_result(status=403, body=b"", headers={"content-type": "text/html"}),  # 取得元を弾く（認証か WAF か不明）
-        make_result(body="<title>Sign in</title><a href='/a'>Sign in with Google</a>"),  # ログインを促す画面
-        make_result(body="<h1>Login</h1><!--><input type=password>-->"),  # パーサに見えない password 欄らしい記述
+        (make_result(status=403, body=b"", headers={"content-type": "text/html"}), _SUSPECT_ONLY),  # 取得元を弾く（認証か WAF か不明）
+        (make_result(body="<title>Sign in</title><a href='/a'>Sign in with Google</a>"), _SUSPECT_ONLY),  # ログインを促す画面
+        (make_result(body="<h1>Login</h1><!--><input type=password>-->"), _SUSPECT_OR_WALL),  # パーサに見えるかが版で割れる記述
     ],
     ids=["403", "login_prompt", "form_unconfirmed"],
 )
-def test_a9_an_open_probe_next_to_a_wall_suspecting_probe_is_not_a_clean_pass(suspicious):
+def test_a9_an_open_probe_next_to_a_wall_suspecting_probe_is_not_a_clean_pass(suspicious, allowed_outcomes):
     """合格の観測と、壁の疑い（不確定）の観測が同居したら、合格を採らない（応答が揺れている）。"""
     wall_like = observe_probe(suspicious, obs_id="O1")
-    assert wall_like.outcome is C.ObsOutcome.INCONCLUSIVE and wall_like.code is C.ObsCode.AUTH_WALL
+    assert wall_like.code is C.ObsCode.AUTH_WALL and wall_like.outcome in allowed_outcomes
     for probes in ([wall_like, _open("O2")], [_open("O2"), wall_like]):
         o = check_auth_wall(_req(), probes, "O9")
         assert o.facts["reason"] == "probe_conflict" and o.outcome is C.ObsOutcome.INCONCLUSIVE
