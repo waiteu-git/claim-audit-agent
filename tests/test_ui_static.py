@@ -96,11 +96,11 @@ def test_the_only_input_field_is_the_github_repo_one_and_the_rest_is_preset_card
     assert len(inputs) == 1 and inputs[0]["id"] == "repo-url" and inputs[0]["type"] == "text"
     assert not any(t in ("textarea", "select", "form") for t, _ in p.tags)
     assert re.search(r'<div id="repo-input"[^>]*\bhidden\b', HTML)
-    assert JS.count('$("repo-url").value') == 1 and "body.repo_url = url" in JS
+    assert JS.count('($("repo-url").value || "")') == 1 and "body.repo_url = url" in JS  # 値を読むのは urlInput() の1か所だけ
     for bad in ("localStorage", "sessionStorage", "document.cookie", "sendBeacon", "history.pushState"):
         assert bad not in JS, bad
     cards = JS.split("function renderPresets")[1].split("function select")[0]
-    assert "p.id === GITHUB_PRESET && !state.judge" in cards  # 審査員コードが無い時は、GitHub のカードを出さない
+    assert "URL_PRESETS[p.id] && !state.judge" in cards  # 審査員コードが無い時は、GitHub・要項モードのカードを出さない
     assert ("button", {"id": "run", "type": "button", "class": "primary", "disabled": None}) in p.tags
     assert ">監査を実行<" in HTML
 
@@ -324,7 +324,7 @@ def test_the_requirement_list_is_a_closed_band_built_from_the_record_and_copying
     assert '"要件一覧（" + fmt(rows.length) + "件）"' in block and "要項の要件一覧" not in JS  # 見出しに「要項の」は付けない
     assert "保存済みの実行のため、最大40件・引用は80字までです。" in block and "!state.live" in block
     assert "p.fictional === true" in block and "$(\"reqlist-actions\").hidden = !canCopy" in block  # コピーは架空の例だけ
-    assert "band.open = false" in block  # 最初は閉じる
+    assert "band.open = specOnly" in block  # 最初は閉じる（要項モードだけは一覧が結果そのものなので開く）
     assert "navigator.clipboard" in JS and "コピーできませんでした" in JS  # 失敗した時は、できなかったと言う
     assert '"reqlist-band"' in JS.split("function resetResult")[1].split("function onMode")[0]  # 新しい実行では帯を隠す
 
@@ -342,6 +342,21 @@ def test_the_github_result_is_drawn_from_fixed_sentences_labels_and_counts_only_
     for code in ("JUDGE_REQUIRED", "INVALID_INPUT", "QUOTA"):
         assert code + ":" in JS.split("const ERROR_JA")[1].split("};")[0], code
     assert "async function errorCode" in JS and "ERROR_JA[code]" in JS
+
+
+def test_the_spec_only_mode_shows_just_the_requirement_list_opened_with_copy_and_no_verdicts():
+    """要項モード（本人の裁定 A-min）: 審査員コード用の⑤カード。URL 欄は GitHub と同じ1つを使い回す（入れる物が変わる時は空にする）。
+    結果は要件の一覧だけ（開いた状態・Markdown のコピー付き）。直す点・判定の数・根拠の帯は出さない。"""
+    assert set(re.findall(r"^    (\w+): \[", JS.split("const URL_PRESETS")[1].split("};")[0], re.M)) == {"github_repo", "spec_url"}
+    assert 'rec.kind === "spec_only"' in JS.split("function renderResult")[1].split("function renderHero")[0]
+    block = JS.split("function renderSpecOnly")[1].split("function renderWarning")[0]
+    assert "renderReqList(rec, rows)" in block and "clear($(\"summary\"))" in block and "判定はしていません" in block
+    for gone in ("renderHero", "renderTrust", "renderPlanted", "renderList()"):
+        assert gone not in block, gone
+    rl = JS.split("function renderReqList")[1].split("function mdCell")[0]
+    assert "p.fictional === true || specOnly" in rl and "band.open = specOnly" in rl
+    assert "body.spec_url = url" in JS and 'state.selected === SPEC_PRESET && !specUrl()' in JS
+    assert 'if (state.urlFor !== id) $("repo-url").value = ""' in JS
 
 
 def test_a_saved_run_does_not_draw_the_time_gauge_because_its_cap_may_differ_from_todays():
