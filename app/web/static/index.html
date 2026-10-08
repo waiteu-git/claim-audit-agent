@@ -22,6 +22,15 @@
     <h2 id="h-presets">1. 監査する対象を選ぶ</h2>
     <p class="note">用意した3つの対象から選びます。任意のURLは受け付けません。</p>
     <div id="presets" class="cards" role="radiogroup" aria-labelledby="h-presets"></div>
+    <div id="preset-detail" class="preset-detail" hidden>
+      <p id="detail-note" class="detail-note" hidden></p>
+      <h3 id="h-detail" class="detail-head">この対象の中身を読む</h3>
+      <ul id="detail-links" class="links" aria-labelledby="h-detail"></ul>
+      <details id="detail-planted" class="more-box" hidden>
+        <summary>仕込んだ欠陥・偽の命令を見る</summary>
+        <ol id="planted-list" class="planted"></ol>
+      </details>
+    </div>
     <div class="actions">
       <button id="run" type="button" class="primary" disabled>監査を実行</button>
       <p id="run-note" class="note" aria-live="polite"></p>
@@ -43,6 +52,11 @@
     </section>
 
     <div id="contradictions" class="contra" hidden></div>
+
+    <section id="planted-band" class="band" aria-labelledby="h-planted" hidden>
+      <h3 id="h-planted">仕込んだ欠陥と、見つけた結果</h3>
+      <ol id="planted-result" class="planted"></ol>
+    </section>
 
     <section id="list-section" class="list" aria-labelledby="h-list" hidden>
       <div class="listhead">

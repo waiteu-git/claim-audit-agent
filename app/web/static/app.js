@@ -106,7 +106,7 @@
   ];
 
   const $ = (id) => document.getElementById(id);
-  const state = { selected: null, judge: null, caps: {}, running: false, traceCount: 0, events: [], view: null };
+  const state = { selected: null, judge: null, caps: {}, running: false, traceCount: 0, events: [], view: null, presets: {} };
 
   function el(tag, opts, children) {
     const n = document.createElement(tag);
@@ -159,7 +159,9 @@
   function renderPresets(presets) {
     const box = $("presets");
     clear(box);
+    state.presets = {};
     for (const p of presets) {
+      state.presets[p.id] = p;
       const t = PRESET_TEXT[p.id] || { num: "", desc: "" };
       const tag = p.replay ? "保存済みの実行あり" : "保存済みの実行なし（ライブのみ）";
       const card = el("button", { cls: "card", attrs: { type: "button", role: "radio", "aria-checked": "false", "data-id": p.id } }, [
@@ -176,6 +178,34 @@
     state.selected = id;
     for (const c of document.querySelectorAll(".card")) c.setAttribute("aria-checked", c.getAttribute("data-id") === id ? "true" : "false");
     $("run").disabled = state.running;
+    showDetail(id);
+  }
+
+  // ---- 選んだ対象の中身（要項・提出物へのリンク・架空の注記・仕込んだ欠陥）。実行の前に読める ----
+  function showDetail(id) {
+    const p = state.presets[id] || {};
+    const links = Array.isArray(p.links) ? p.links : [];
+    const planted = Array.isArray(p.planted) ? p.planted : [];
+    const note = $("detail-note");
+    note.textContent = p.fictional && p.fictional_note ? p.fictional_note : "";
+    note.hidden = !note.textContent;
+    const ul = $("detail-links");
+    clear(ul);
+    const seen = {};
+    const total = {};
+    for (const ln of links) total[ln.role] = (total[ln.role] || 0) + 1;
+    for (const ln of links) {
+      seen[ln.role] = (seen[ln.role] || 0) + 1;
+      const label = ln.label_ja + (total[ln.role] > 1 ? "（" + seen[ln.role] + "）" : "");
+      ul.appendChild(el("li", null, [el("a", { text: label, attrs: { href: ln.href, target: "_blank", rel: "noopener noreferrer" } })]));
+    }
+    $("h-detail").hidden = !links.length;
+    ul.hidden = !links.length;
+    const list = $("planted-list");
+    clear(list);
+    for (const x of planted) list.appendChild(el("li", null, [document.createTextNode(x.summary_ja), el("span", { cls: "where", text: "　" + x.where_ja })]));
+    $("detail-planted").hidden = !planted.length;
+    $("preset-detail").hidden = !(note.textContent || links.length || planted.length);
   }
 
   // ---- 実行（SSE を fetch の本文から読む）----
@@ -241,7 +271,8 @@
     $("result").hidden = false;
     for (const id of ["summary", "contradictions", "trace", "budget", "source-body", "filters", "reqs", "facts", "trust-flow", "replan-steps"]) clear($(id));
     $("list-status").textContent = "";
-    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "hero-others", "list-section", "omitted", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
+    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "hero-others", "list-section", "omitted", "planted-band", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
+    clear($("planted-result"));
     $("run-mode").textContent = "";
     $("run-mode").className = "run-mode";
     state.events = [];
@@ -360,6 +391,7 @@
       n.hidden = false;
     }
     renderContradictions(rec);
+    renderPlanted(rec, rows);
     renderFilters();
     renderList();
     $("list-section").hidden = false;
@@ -441,6 +473,58 @@
     box.appendChild(el("h3", { text: "要項の間の矛盾（" + list.length + " 件）" }));
     box.appendChild(ul);
     box.hidden = false;
+  }
+
+  // ---- 仕込んだ欠陥と、見つけた結果の対応（同梱の記録から引いた対応。この実行の記録と食い違う時は、対応を言わずに出さない）----
+  function plantedFound(x, rec, rows) {
+    const f = x.found || {};
+    if (f.kind === "verdict") {
+      const row = rows.find((r) => r.r.req_id === f.req_id && r.v && r.v.label === f.label);
+      return row ? { text: f.req_id + " が「" + f.label + "」と判定されました。", go: () => showCard(f.req_id), goLabel: f.req_id + " を見る" } : null;
+    }
+    if (f.kind === "contradiction") {
+      const hit = (rec.contradictions || []).find((c) => c.slot === f.slot && (c.req_ids || []).join() === (f.req_ids || []).join());
+      return hit ? { text: "要項の間の矛盾（" + f.slot + "）として見つかりました。", go: () => $("contradictions").scrollIntoView({ block: "center" }), goLabel: "矛盾を見る" } : null;
+    }
+    if (f.kind === "signals") {
+      const s = rec.summary || {};
+      const n = x.id === "INJ_VISIBLE" ? s.injection_visible : s.injection_hidden;
+      return n >= f.count && f.count > 0 ? { text: "偽の命令の疑いとして " + fmt(n) + " 件、見つかりました（AIには伏せて渡し、判定には使っていません）。", go: () => $("warning").scrollIntoView({ block: "center" }), goLabel: "警告を見る" } : null;
+    }
+    return null;
+  }
+
+  function renderPlanted(rec, rows) {
+    const p = state.presets[rec.preset_id] || {};
+    const planted = Array.isArray(p.planted) ? p.planted : [];
+    const list = $("planted-result");
+    clear(list);
+    if (!planted.length) return;
+    const found = planted.map((x) => plantedFound(x, rec, rows));
+    if (found.some((f) => !f)) return; // この実行の記録と合わない対応は、言わない
+    planted.forEach((x, i) => {
+      const f = found[i];
+      const go = el("button", { cls: "linkish", text: f.goLabel, attrs: { type: "button" } });
+      go.addEventListener("click", f.go);
+      list.appendChild(el("li", null, [el("span", { cls: "pl-what", text: x.summary_ja }), el("span", { cls: "pl-found", text: " → " + f.text }), document.createTextNode(" "), go]));
+    });
+    $("planted-band").hidden = false;
+  }
+
+  // 一覧の中の1件へ移る（絞り込み・省略で隠れていたら、開いてから）
+  function showCard(reqId) {
+    let li = document.getElementById("r-" + reqId);
+    if (!li && state.view) {
+      state.view.filter = "all";
+      state.view.more = { human: true, tool: true, ref: true };
+      renderFilters();
+      renderList();
+      li = document.getElementById("r-" + reqId);
+    }
+    if (!li) return;
+    for (const x of document.querySelectorAll(".rcard.hit")) x.classList.remove("hit");
+    li.classList.add("hit");
+    li.scrollIntoView({ block: "center" });
   }
 
   // ---- 絞り込みと一覧 ----

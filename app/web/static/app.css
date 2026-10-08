@@ -88,6 +88,17 @@ h3 { font-size: 1.05rem; line-height: 1.5; margin: 0; }
 .card .title { font-weight: 700; display: block; }
 .card .desc { color: var(--muted); display: block; font-size: 0.92rem; margin-top: 4px; line-height: 1.6; }
 .card .tag { display: inline-block; margin-top: 8px; font-size: 0.85rem; color: var(--muted); }
+.preset-detail { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel2); padding: 14px 18px; margin: 12px 0; }
+.detail-note { margin: 0 0 8px; padding: 6px 12px; border-radius: 8px; background: var(--warn-bg); border: 1px solid var(--warn-line); font-weight: 600; }
+.detail-head { font-size: 1rem; margin: 0 0 4px; }
+.links { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 20px; }
+.links a { display: inline-flex; align-items: center; min-height: 32px; color: var(--accent); font-weight: 700; }
+.planted { margin: 4px 0 0; padding-left: 1.4em; }
+.planted li { margin: 4px 0; }
+.planted .where { color: var(--muted); font-size: 0.9rem; }
+.pl-what { font-weight: 700; }
+.pl-found { color: var(--text); }
+.rcard.hit { outline: 3px solid var(--focus); outline-offset: 2px; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .primary {
   min-height: 44px; background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 0 24px; font-weight: 700; cursor: pointer;
