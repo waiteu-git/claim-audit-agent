@@ -2014,6 +2014,26 @@ class RunRecord(_Frozen):
         return cls.restore(json.loads(text), seal=seal)
 
 
+SPEC_MAX_URLS = 3  # 要項モードの1実行で受ける URL の数（config.FETCH_LIMITS.spec_max_pages と一致させる。tests が固定する）
+
+
+class SpecSkipReason(StrEnum):
+    """要項モードで読めなかったページの理由（固定文。URL・数値・ページの文面を埋め込まない）。"""
+
+    FETCH_FAILED = "取得できませんでした。"
+    REFUSED = "取得が許可されませんでした。"
+    UNSUPPORTED = "HTMLとテキスト以外の形式のため、読んでいません。"
+    TOO_LARGE = "大きすぎるため、読んでいません。"
+    EMPTY = "読める本文がありませんでした。"
+
+
+class SpecSkippedPage(_Frozen):
+    """読めなかったページ1件。何番目の入力か（1〜3）と理由の種類だけ（URL は載せない）。"""
+
+    page: int = Field(ge=1, le=SPEC_MAX_URLS)
+    reason: SpecSkipReason
+
+
 class SpecOnlyRecord(RunRecord):
     """要項モード（第11弾）の結果: 要件の一覧だけ。判定・観測・矛盾を持たないことを型で表す（kind="spec_only"）。
 
@@ -2023,6 +2043,7 @@ class SpecOnlyRecord(RunRecord):
 
     kind: Literal["spec_only"] = "spec_only"
     preset_id: Literal["spec_url"] = SPEC_URL_PRESET_ID
+    skipped_pages: tuple[SpecSkippedPage, ...] = Field(default=(), max_length=SPEC_MAX_URLS)  # 読めなかったページ（何番目か・理由の種類）
 
     @model_validator(mode="after")
     def _all_verdicts(self) -> "SpecOnlyRecord":  # RunRecord の同名の検査を差し替える
@@ -2030,6 +2051,9 @@ class SpecOnlyRecord(RunRecord):
             raise ValueError("要項モードの結果は判定・観測・矛盾を持てません")
         if self.summary.verdict_counts:
             raise ValueError("要項モードの集計に判定の件数は載せません")
+        pages = [s.page for s in self.skipped_pages]
+        if pages != sorted(set(pages)):
+            raise ValueError("読めなかったページは、重複なく入力の順で")
         return self
 
 

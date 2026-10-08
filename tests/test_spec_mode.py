@@ -141,6 +141,7 @@ def test_flag_on_status_lists_the_preset_with_the_agreed_shape():
     presets = client(spec_deps()).get("/api/status").json()["presets"]
     assert presets[-1] == {
         "id": "spec_url", "label": "要項のURLから要件の一覧だけを作る（審査員コード用）", "kind": "spec_url", "replay": False, "input": "spec_url",
+        "max_urls": 3,
     }  # fmt: skip
     assert presets[-1] == SPEC_URL_PRESET and [p["id"] for p in presets[:3]] == ["lp_self", "sample_defect", "sample_injection"]
 

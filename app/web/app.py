@@ -52,7 +52,7 @@ from app.config import (
     build_presets,
     get_settings,
 )
-from app.contracts import GITHUB_REPO_PRESET_ID, SPEC_URL_PRESET_ID, AbortReason, FetchPort, Preset, RunRecord, RunStatus, TraceEvent
+from app.contracts import GITHUB_REPO_PRESET_ID, SPEC_MAX_URLS, SPEC_URL_PRESET_ID, RunCaps, AbortReason, FetchPort, Preset, RunRecord, RunStatus, TraceEvent
 from app.egress_guard import EgressGuard
 from app.errors import PUBLIC_MESSAGES, AppError, ErrorCode, PublicError, classify
 from app.fixtures.site import FixtureSite
@@ -101,6 +101,7 @@ SPEC_URL_PRESET = {
     "kind": SPEC_URL_PRESET_ID,
     "replay": False,  # 同梱の記録は無い
     "input": "spec_url",
+    "max_urls": SPEC_MAX_URLS,  # 画面が欄の数を決める（spec_urls は1〜3件）
 }
 
 SpecModelFactory = Callable[[float], ModelPort]  # 壁時計の締切（monotonic）→ Reader のモデル
@@ -116,6 +117,7 @@ class WebDeps:
     repo_fetch: Callable[[], FetchPort] | None = None  # GITHUB_INPUT_ENABLED の時だけ使う（固定ファイルの取得）。無ければ「いま使えません」
     spec_fetch: Callable[[], FetchPort] | None = None  # SPEC_INPUT_ENABLED の時だけ使う（公開ページの取得）。無ければ「いま使えません」
     spec_model: SpecModelFactory | None = None  # SPEC_INPUT_ENABLED の時だけ使う（Reader のモデル）。無ければ「いま使えません」
+    spec_caps: RunCaps = RUN_CAPS  # 要項モードの1実行の上限（既存の RUN_CAPS。テストは小さくして部分結果を確かめる）
     replay_delay_s: float = 0.03
     heartbeat_s: float = GUARD_LIMITS.sse_heartbeat_s
     run_timeout_s: float = RUN_CAPS.wall_clock_s + 10.0  # Cloud Run の timeout（120 秒）の内側。切り替えの再生の分（数秒）を残す
@@ -441,7 +443,9 @@ async def spec_events(deps: WebDeps, refs: list[SpecRef], adm: Admission, t_requ
             if port is None or model is None:
                 return SpecReadOutcome(error=ErrorCode.SPEC_UNAVAILABLE)
             async with asyncio.timeout(budget_s):
-                return await read_spec_pages(refs, fetch=port, reader_model=model, settings=deps.settings, trace_sink=queue.put_nowait)
+                return await read_spec_pages(
+                    refs, fetch=port, reader_model=model, settings=deps.settings, caps=deps.spec_caps, trace_sink=queue.put_nowait
+                )
 
         task = asyncio.ensure_future(work())
         while True:
@@ -608,13 +612,28 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
         )
 
     def spec_refs(data: dict) -> list[SpecRef] | None:
-        """要項モードの本文 → 検証済みの URL の列。形が違えば None（応答は INVALID_INPUT の固定文。入力は応答にもログにも出さない）。"""
-        if set(data) != {"preset_id", "spec_url"}:
+        """要項モードの本文 → 検証済みの URL の列。形が違えば None（応答は INVALID_INPUT の固定文。入力は応答にもログにも出さない）。
+
+        受けるのは `spec_url`（1件の文字列）か `spec_urls`（1〜3件の文字列の配列）のどちらか一方だけ。両方・0件・4件以上・
+        型違い・重複（正規化した後で同じ URL）は拒否する。各 URL の検証は1件ずつ parse_spec_url。"""
+        keys = set(data)
+        if keys == {"preset_id", "spec_url"}:
+            raw = [data["spec_url"]]
+        elif keys == {"preset_id", "spec_urls"} and isinstance(data["spec_urls"], list):
+            raw = data["spec_urls"]
+        else:
             return None
-        try:
-            return [parse_spec_url(data["spec_url"])]
-        except AppError:
+        if not 1 <= len(raw) <= SPEC_MAX_URLS:
             return None
+        refs: list[SpecRef] = []
+        for item in raw:
+            try:
+                refs.append(parse_spec_url(item))
+            except AppError:
+                return None
+        if len(set(refs)) != len(refs):
+            return None
+        return refs
 
     @app.post("/api/run")
     async def api_run(request: Request) -> Response:

@@ -236,10 +236,10 @@ class FetchLimits(BaseModel):
     repo_relay_bytes_per_min: int = 12 * 1024 * 1024
     # 要項モード（第11弾。contracts.OpenPageScope の規則で通った要求にだけ掛ける）
     spec_max_page_bytes: int = 1024 * 1024  # 1ページの本文の上限（既存の上限 max_decoded_bytes 以下）。超えたら打切りでなく拒否
-    spec_max_pages: int = 1  # 1実行で取るページ数（呼び出し側が守る。S3 は実行の区切りを見られないので、下の窓あたりの数で絞る）
-    # S3 自身の取りすぎ止め（インスタンスごと・固定窓）。審査員の枠は1時間3回なので、1分に数件で足りる。超えたら 429
-    spec_relay_requests_per_min: int = 6
-    spec_relay_bytes_per_min: int = 6 * 1024 * 1024
+    spec_max_pages: int = 3  # 1実行で取るページ数の上限（入口が3件までしか受けない。S3 は実行の区切りを見られないので、下の窓あたりの数で絞る）
+    # S3 自身の取りすぎ止め（インスタンスごと・固定窓）。1実行は最大3ページ・審査員の枠は1時間3回なので、1分に3実行ぶん（9件）。超えたら 429
+    spec_relay_requests_per_min: int = 9
+    spec_relay_bytes_per_min: int = 9 * 1024 * 1024
     probe_retry_max: int = 1  # 1回だけ再試行（S-04）。再試行を fetches_probe に数えるかは設計に記載なし（未裁定）
 
 

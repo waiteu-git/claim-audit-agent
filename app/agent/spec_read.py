@@ -2,6 +2,11 @@
 
   read_spec_pages(refs, fetch=..., reader_model=...) -> SpecReadOutcome   結果（SpecOnlyRecord）か、結果にならない失敗の ErrorCode
 
+複数リンク（最大3件）: 入力の URL を1つずつ1ページだけ取り、取れたページを出典 D1・D2・D3 の文書として Reader に渡す（LP＋FAQ の
+複数文書と同じ扱い）。取れない・形式が違う（PDF など）ページは、そのページだけを飛ばし、結果の skipped_pages に「何番目か・理由の種類」
+を載せる（URL は載せない）。全部取れなければ固定文のエラー。費用は1実行の既存の上限（モデル呼び出し数・トークン）のまま
+（超えたら打ち切って部分結果＝DEGRADED）。
+
 流れ: ACQUIRE（入力の URL を1つずつ FetchPort で取る。リンクは辿らない）→ 既存の洗浄（ingest.sanitize。隠しテキストの分離）→
 READ（既存の reader.read_spec。注入の疑いの区間は mask_injections で伏せ、引用は原文と照合し、受け付けなかった引用は1回だけ
 引用し直させる）→ REPORT（引用の最終再検証だけ）。
@@ -45,8 +50,11 @@ from app.contracts import (
     RunMode,
     RunStatus,
     RunSummary,
+    SPEC_MAX_URLS,
     SanitizedDoc,
     SpecOnlyRecord,
+    SpecSkippedPage,
+    SpecSkipReason,
     TraceEvent,
     TraceType,
 )
@@ -72,22 +80,30 @@ class SpecReadOutcome:
     cost_micro_jpy: int = 0  # モデル呼び出しの見積もり費用（精算に使う）
 
 
-def _usable(result: FetchResult) -> bool:
-    """S3 の規則を信用しすぎず、こちらでも確かめる: 転送を経ていない 200・html か plain・打切りでない・NUL を含まない。"""
-    return (
-        result.outcome is FetchOutcome.OK
-        and result.status == 200
-        and not result.redirects
-        and not result.truncated
-        and result.content_kind in (ContentKind.HTML, ContentKind.PLAIN)
-        and bool(result.body)
-        and b"\x00" not in result.body
-    )
+def skip_reason(result: FetchResult | None) -> SpecSkipReason | None:
+    """読めるページなら None、読めないなら理由の種類。S3 の規則を信用しすぎず、こちらでも確かめる:
+    転送を経ていない 200・html か plain・打切りでない・空でない・NUL を含まない。"""
+    if result is None:
+        return SpecSkipReason.FETCH_FAILED
+    o = result.outcome
+    if o is FetchOutcome.BLOCKED:
+        return SpecSkipReason.REFUSED  # S3 が規則を持たない（SPEC_FETCH_ENABLED なし）・規則の外・私的アドレス
+    if o is FetchOutcome.UNSUPPORTED_TYPE:
+        return SpecSkipReason.UNSUPPORTED
+    if o is FetchOutcome.TOO_LARGE or result.truncated:
+        return SpecSkipReason.TOO_LARGE
+    if o is not FetchOutcome.OK or result.status != 200 or result.redirects:
+        return SpecSkipReason.FETCH_FAILED  # 404・3xx（転送は追わない）・5xx・通信の失敗・期限切れ
+    if result.content_kind not in (ContentKind.HTML, ContentKind.PLAIN) or b"\x00" in result.body:
+        return SpecSkipReason.UNSUPPORTED
+    if not result.body:
+        return SpecSkipReason.EMPTY
+    return None
 
 
-def _failure_code(result: FetchResult | None) -> ErrorCode:
-    if result is not None and result.outcome is FetchOutcome.BLOCKED:
-        return ErrorCode.SPEC_UNAVAILABLE  # S3 が規則を持たない（SPEC_FETCH_ENABLED なし）・規則の外
+def _failure_code(skipped: list[SpecSkippedPage]) -> ErrorCode:
+    if skipped and all(s.reason is SpecSkipReason.REFUSED for s in skipped):
+        return ErrorCode.SPEC_UNAVAILABLE  # 全部を S3 が拒否した＝いま使えない
     return ErrorCode.FETCH_FAILED
 
 
@@ -116,8 +132,10 @@ async def read_spec_pages(
     gov = Governor(state, meter, trace, kill_switch=lambda: settings.kill_switch)
     started = datetime.now(UTC)
 
+    if not 1 <= len(refs) <= SPEC_MAX_URLS:
+        raise ValueError("要項モードの URL は1〜3件")
     gov.enter(Phase.ACQUIRE)
-    last: FetchResult | None = None
+    skipped: list[SpecSkippedPage] = []
     for i, ref in enumerate(refs, start=1):
         if gov.check_stop():
             break
@@ -133,25 +151,28 @@ async def read_spec_pages(
             code = classify(e).value.lower()
         finally:
             meter.budget.charge_fetch(None, FetchKind.ACQUIRE)
-        last = result
         if result is not None:
             code = result.outcome.value
         trace.emit(gov.phase, Actor.TOOL, TraceType.TOOL_RESULT, name="acquire", reason_code=code,
                    bytes=len(result.body) if result is not None else None)  # fmt: skip
-        if result is None or not _usable(result):
-            log_event("spec.page_skipped", spec=spec_log_id(ref), code=code, status=result.status if result is not None else None)
-            continue
-        try:
-            doc = sanitize(result, doc_id=state.next_doc_id(), role=DocRole.SPEC, label=f"要項 {i}", scope=())
-        except ValueError:
-            log_event("spec.page_skipped", spec=spec_log_id(ref), code="sanitize")
+        why = skip_reason(result)
+        doc: SanitizedDoc | None = None
+        if why is None:
+            try:
+                doc = sanitize(result, doc_id=state.next_doc_id(), role=DocRole.SPEC, label=f"要項 {i}", scope=())  # type: ignore[arg-type]
+            except ValueError:
+                why = SpecSkipReason.UNSUPPORTED
+        if doc is None or why is not None:
+            skipped.append(SpecSkippedPage(page=i, reason=why or SpecSkipReason.FETCH_FAILED))
+            log_event("spec.page_skipped", spec=spec_log_id(ref), page=i, code=code, reason=(why or SpecSkipReason.FETCH_FAILED).name,
+                      status=result.status if result is not None else None)  # fmt: skip
             continue
         state.add_doc(_without_snippets(doc))
 
     if gov.status is RunStatus.ABORTED:
         return SpecReadOutcome(error=ErrorCode.KILLED if gov.aborted_reason is AbortReason.KILL else ErrorCode.CANCELLED)
     if not state.docs:
-        return SpecReadOutcome(error=_failure_code(last))
+        return SpecReadOutcome(error=_failure_code(skipped))
 
     gov.enter(Phase.READ)
     read = await read_spec(state, gov, reader_model)
@@ -182,6 +203,7 @@ async def read_spec_pages(
         budget=meter.budget.snapshot(),
         events=tuple(trace.events),
         omitted_events=trace.omitted,
+        skipped_pages=tuple(skipped),
     )
-    log_event("spec.read_done", pages=len(state.docs), requirements=len(reqs), status=gov.status.value)
+    log_event("spec.read_done", pages=len(state.docs), skipped=len(skipped), requirements=len(reqs), status=gov.status.value)
     return SpecReadOutcome(record=record, cost_micro_jpy=summary.est_cost_micro_jpy)
