@@ -466,11 +466,14 @@
   function plantedFound(x, rec, rows) {
     const f = x.found || {};
     if (f.kind === "verdict") {
-      const row = rows.find((r) => r.r.req_id === f.req_id && r.v && r.v.label === f.label);
-      return row ? { text: f.req_id + " が「" + f.label + "」と判定されました。", go: () => showCard(f.req_id), goLabel: f.req_id + " を見る" } : null;
+      // 番号は保存済みの実行の値なので、要項の一文（quote）で、いま表示している実行の記録の行と結ぶ（無ければ番号）
+      const same = (a, b) => a === b || (a && b && (a.endsWith("…") || b.endsWith("…")) && a.slice(0, 20) === b.slice(0, 20));
+      const row = rows.find((r) => r.v && r.v.label === f.label && (f.quote ? r.r.span && same(r.r.span.original_span, f.quote) : r.r.req_id === f.req_id));
+      return row ? { text: row.r.req_id + " が「" + f.label + "」と判定されました。", go: () => showCard(row.r.req_id), goLabel: row.r.req_id + " を見る" } : null;
     }
     if (f.kind === "contradiction") {
-      const hit = (rec.contradictions || []).find((c) => c.slot === f.slot && (c.req_ids || []).join() === (f.req_ids || []).join());
+      const key = (t) => (t || []).slice().sort().join("|");
+      const hit = (rec.contradictions || []).find((c) => c.slot === f.slot && (f.tokens ? key(c.tokens) === key(f.tokens) : (c.req_ids || []).join() === (f.req_ids || []).join()));
       return hit ? { text: "要項の間の矛盾（" + f.slot + "）として見つかりました。", go: () => $("contradictions").scrollIntoView({ block: "center" }), goLabel: "矛盾を見る" } : null;
     }
     if (f.kind === "signals") {
