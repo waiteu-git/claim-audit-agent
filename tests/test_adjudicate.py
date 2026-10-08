@@ -415,8 +415,17 @@ def test_code_set_mark_gives_the_reason_when_nothing_else_decides():
 
 @pytest.mark.parametrize("code", [U.HUMAN_ONLY, U.NOT_PUBLIC, U.FUTURE, U.OUT_OF_SCOPE, U.NO_EVIDENCE])
 def test_planner_marks_without_a_premise_requirement_are_accepted(code):
-    v = one(R("R6", "free", CC.NONE), marks=[mark(code, by_planner=True, req_id="R6")])
+    # 検査の種類がある要件（観測が不確定だった後の印）では、前提の要らない理由を従来どおり採る
+    v = one(R("R3", "guide", CC.GUIDANCE_PRESENT), marks=[mark(code, by_planner=True, req_id="R3")])
     assert v.reason_code is code
+
+
+@pytest.mark.parametrize("code", [U.HUMAN_ONLY, U.NOT_PUBLIC, U.FUTURE, U.OUT_OF_SCOPE])
+def test_planner_marks_with_model_chosen_codes_do_not_decide_a_none_class_requirement(code):
+    # 検査できないクラスの理由は、引用の文面から関門（checks/unverifiable_reason）が決める。Planner（モデル）が前提なしで選べる
+    # 4コードは採らない（モデルが理由コードと固定文を決められない）。tests/test_unverifiable_reason.py に文面ごとの確認がある
+    req = R("R6", "free", CC.NONE)
+    assert one(req, marks=[mark(code, by_planner=True, req_id="R6")]) == one(req)
 
 
 def probe_obs(obs_id: str = "O2", **spec) -> C.Observation:
@@ -518,7 +527,8 @@ def test_one_verdict_per_requirement_in_input_order():
     verdicts = run(reqs, observations, marks)
     assert [v.req_id for v in verdicts] == [r.req_id for r in reqs]
     assert [v.label for v in verdicts] == [L.FAIL, L.FAIL, L.UNVERIFIABLE, L.PASS, L.UNVERIFIABLE, L.UNVERIFIABLE, L.UNVERIFIABLE, L.REFERENCE]
-    assert [v.reason_code for v in verdicts] == [None, None, U.NO_EVIDENCE, None, U.NO_EVIDENCE, U.HUMAN_ONLY, U.BUDGET, None]
+    # R6（検査できないクラス）の Planner の印 HUMAN_ONLY は採らず、引用の文面から関門が決める（この文は何にも当たらず OUT_OF_SCOPE）
+    assert [v.reason_code for v in verdicts] == [None, None, U.NO_EVIDENCE, None, U.NO_EVIDENCE, U.OUT_OF_SCOPE, U.BUDGET, None]
 
 
 def test_adjudication_is_deterministic_and_independent_of_unrelated_observations_order():

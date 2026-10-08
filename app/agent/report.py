@@ -6,6 +6,7 @@ JSON は契約の serialize_report が唯一の入口（VerifiedRequirement 以�
 """
 from html import escape
 
+from app.adjudicate import GATE_REASON_TEXTS
 from app.contracts import (
     CHIP_LABEL_JA,
     REASON_LABEL_JA,
@@ -70,7 +71,7 @@ def report_html(record: RunRecord) -> str:
         else:
             label = escape(v.label.value)
             why = escape(v.reason)
-            if v.reason_code is not None:
+            if v.reason_code is not None and v.reason not in GATE_REASON_TEXTS:  # 固定文は見出しと同じことを言うので、見出しを前に付けない
                 why = escape(REASON_LABEL_JA[v.reason_code]) + ("：" + why if why else "")
             ev = escape("、".join(e.label for e in v.evidence))
             if v.label is VerdictLabel.REFERENCE:

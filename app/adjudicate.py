@@ -351,6 +351,9 @@ _NONE_CLASS_TEXT: dict[UnverifiableReason, str] = {
 }
 
 
+GATE_REASON_TEXTS = frozenset(_NONE_CLASS_TEXT.values())  # report が、見出しと重なる固定文の前に理由ラベルを付けないために使う
+
+
 def _unverifiable_text(code: UnverifiableReason, o: Observation | None = None) -> str:
     label = REASON_LABEL_JA[code]
     if o is not None and o.code is ObsCode.LIMIT_UNDECIDABLE:
@@ -426,6 +429,17 @@ def _effective(o: Observation, docs: Mapping[str, DocMeta]) -> _Ev:
             return _Ev(o, _K.NONE, UnverifiableReason.NO_EVIDENCE)
         return _Ev(o, _K.PASS)
     return _Ev(o, _K.NONE, _inconclusive_reason(o))
+
+
+# Planner（モデル）が前提なしで選べる理由コード（governor.PLANNER_MARK_CODES のうち、前提の観測を要しないもの）。
+# 検査できないクラスの要件では、この印を採らず、引用の文面から関門（checks/unverifiable_reason）が理由と固定文を決める。
+_MODEL_CHOSEN_CODES = frozenset(
+    {UnverifiableReason.HUMAN_ONLY, UnverifiableReason.FUTURE, UnverifiableReason.OUT_OF_SCOPE, UnverifiableReason.NOT_PUBLIC}
+)
+
+
+def _gate_overrides_mark(m: UnverifiableMark, checker: Checker | None) -> bool:
+    return checker is None and m.by_planner and m.reason_code in _MODEL_CHOSEN_CODES
 
 
 def _mark_valid(m: UnverifiableMark, obs_by_id: Mapping[str, Observation]) -> bool:
@@ -537,7 +551,7 @@ def _decide(
                 req_id=req.req_id, label=VerdictLabel.FAIL, reason=_fail_reason(o), evidence=_refs([o])
             )
 
-    if mark is not None and _mark_valid(mark, obs_by_id):
+    if mark is not None and not _gate_overrides_mark(mark, checker) and _mark_valid(mark, obs_by_id):
         premise = obs_by_id.get(mark.premise_obs_id) if mark.premise_obs_id is not None else None
         return _unverifiable(req, mark.reason_code, _unverifiable_text(mark.reason_code), [premise] if premise else [])
 
@@ -557,8 +571,11 @@ def _decide(
         return _unverifiable(req, reason, _unverifiable_text(reason, e.obs), [e.obs])
 
     if checker is None:  # 検査できないクラス: 引用の文面から、人が確かめる条件か・約束か等を決める（迷えば OUT_OF_SCOPE）
-        quote = req.span.original_span if req.span is not None else ""
-        code = unverifiable_reason(quote, req.kind)
+        span = req.span
+        if span is None or span.quote_clipped:  # 同梱用に切った引用は文の前半だけ。前半の語で理由を決めない
+            code = UnverifiableReason.OUT_OF_SCOPE
+        else:
+            code = unverifiable_reason(span.original_span, req.kind)
         return _unverifiable(req, code, _NONE_CLASS_TEXT[code])
     code = UnverifiableReason.NO_EVIDENCE
     return _unverifiable(req, code, _unverifiable_text(code))
