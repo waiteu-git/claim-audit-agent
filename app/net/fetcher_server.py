@@ -5,9 +5,10 @@
   GET  /health  {"ok": true}
 それ以外のパスは 404。
 
-要項モード（第11弾）: SPEC_FETCH_ENABLED=1 の時だけ、許可リストの外の公開ページを1ページずつ取る規則（contracts.OpenPageScope）を
-SafeFetch に足す。S3 は実行の区切りを見られないので、「1実行1ページ」は S2 が守り、S3 はこの規則で通りうる要求（許可リストにも
-GitHub の固定ファイルにも当たらない要求）の数と本文の量を、RepoRelayLimiter と同じ形の窓で数えて頭打ちにする（超えたら 429）。
+要項モード（第11弾）: SPEC_FETCH_ENABLED=1 の時だけ、公開ページを1ページずつ取る規則（contracts.OpenPageScope）を SafeFetch に足す。
+この規則が当たるのは、要項モードの印（FetchMode.SPEC_PAGE）のある要求だけ（印の無い通常の取得は、今までどおり許可リストだけ）。
+S3 は実行の区切りを見られないので、件数は S2 が守り、S3 は印のある要求の数と本文の量を RepoRelayLimiter と同じ形の窓で数えて
+頭打ちにする（超えたら 429）。どの窓に数えるかは、ホスト名でなく SafeFetch が当てる規則（印の有無）で決める。
 
 認証: Authorization: Bearer <ID token> を verify_token（注入できる）で確かめる。Cloud Run は --no-allow-unauthenticated で
 プラットフォームが ID token の署名と呼び出し元（roles/run.invoker）を検証してから中へ通すので、既定の verify_token は
@@ -23,7 +24,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from app.config import FETCH_LIMITS, FetchLimits, Settings
-from app.contracts import GITHUB_RAW_HOST, FetchPort, FetchRequest, OpenPageScope, RepoRawScope
+from app.contracts import GITHUB_RAW_HOST, FetchMode, FetchPort, FetchRequest, OpenPageScope, RepoRawScope
 from app.jsonlog import log_event, log_exception
 
 MAX_FETCH_REQUEST_BYTES = 8 * 1024
@@ -81,16 +82,6 @@ def spec_relay_limiter(limits: FetchLimits, *, clock: Callable[[], float] = time
     return RepoRelayLimiter(limits, clock=clock, max_requests=limits.spec_relay_requests_per_min, max_bytes=limits.spec_relay_bytes_per_min)
 
 
-def _outside_allow_list(url: str, prefixes) -> bool:  # noqa: ANN001
-    """許可リストの外か（形が URL として通らないものも外として数える＝数え過ぎの側）。"""
-    from app.net.urlcheck import UrlRejected, in_scope, validate_url
-
-    try:
-        return not in_scope(validate_url(url), prefixes)
-    except UrlRejected:
-        return True
-
-
 def _is_github_raw(url: str) -> bool:
     try:
         return (urlsplit(url).hostname or "").lower() == GITHUB_RAW_HOST
@@ -139,13 +130,12 @@ def create_fetcher_app(
             req = FetchRequest.model_validate_json(body)
         except ValidationError:
             return JSONResponse({"ok": False, "code": "INVALID_INPUT"}, status_code=400)
-        counted = relay is not None and _is_github_raw(req.url)
+        spec_mode = req.mode is FetchMode.SPEC_PAGE  # 印のある要求だけが公開ページの規則で通りうる（固定ファイルの規則は当たらない）
+        counted = relay is not None and not spec_mode and _is_github_raw(req.url)
         if counted and not relay.admit():
             log_event("fetcher.repo_relay_limited", severity="WARNING")
             return JSONResponse({"ok": False, "code": "RETRYABLE"}, status_code=429)
-        spec_counted = (
-            spec_relay is not None and not _is_github_raw(req.url) and _outside_allow_list(req.url, settings.allowed_prefixes)
-        )
+        spec_counted = spec_relay is not None and spec_mode
         if spec_counted and not spec_relay.admit():
             log_event("fetcher.spec_relay_limited", severity="WARNING")
             return JSONResponse({"ok": False, "code": "RETRYABLE"}, status_code=429)

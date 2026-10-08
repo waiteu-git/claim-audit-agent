@@ -23,7 +23,7 @@ def rig(routes=None, *, enabled=True, prefixes=(), dns=None, **kw):  # noqa: ANN
     return make_rig(routes, dns=dns or DNS, prefixes=prefixes, open_page=OpenPageScope() if enabled else None, **kw)
 
 
-async def get(r, url=URL, mode=FetchMode.PAGE):  # noqa: ANN001, ANN201
+async def get(r, url=URL, mode=FetchMode.SPEC_PAGE):  # noqa: ANN001, ANN201  既定は要項モードの印つき
     return await r.fetch.fetch_ex(FetchRequest(url=url, mode=mode))
 
 
@@ -195,8 +195,8 @@ def relay_app(*, enabled, limits=None, clock=None, prefixes=""):  # noqa: ANN001
     return TestClient(create_fetcher_app(load_settings(env), fetch=Port(), **kw)), calls
 
 
-def post(client, url):  # noqa: ANN001, ANN201
-    return client.post("/fetch", json={"url": url}, headers={"authorization": "Bearer t"})
+def post(client, url, mode="spec_page"):  # noqa: ANN001, ANN201  既定は要項モードの印つき
+    return client.post("/fetch", json={"url": url, "mode": mode}, headers={"authorization": "Bearer t"})
 
 
 def test_s3_caps_open_page_requests_per_window_by_itself():
@@ -204,8 +204,8 @@ def test_s3_caps_open_page_requests_per_window_by_itself():
     client, calls = relay_app(enabled=True, prefixes="svc.example.invalid/fx/")
     codes = [post(client, f"https://site{i}.example/rules").status_code for i in range(n + 4)]
     assert codes == [200] * n + [429] * 4 and len(calls) == n  # 頭打ちの後は取りに行かない
-    assert post(client, "https://svc.example.invalid/fx/a").status_code == 200  # 許可リストの取得は数えない
-    assert post(client, "https://raw.githubusercontent.com/o/r/HEAD/README.md").status_code == 200  # GitHub の固定ファイルも数えない
+    assert post(client, "https://svc.example.invalid/fx/a", mode="page").status_code == 200  # 印の無い取得は数えない
+    assert post(client, "https://raw.githubusercontent.com/o/r/HEAD/README.md", mode="page").status_code == 200  # GitHub の固定ファイルも数えない
 
 
 def test_s3_cap_resets_with_the_window_and_counts_bytes():
@@ -251,3 +251,98 @@ def test_startup_checks_for_both_flags():
     assert any("FETCHER_URL" in v for v in startup_violations(load_settings(pub), {}, {}))
     assert startup_violations(load_settings({**pub, "FETCHER_URL": "https://f.example.invalid"}), {}, {}) == []
     assert startup_violations(load_settings({"SPEC_INPUT_ENABLED": "1", "JUDGE_CODE_SHA256": "a" * 64}), {}, {}) == []  # 開発の既定（inproc）
+
+
+# ====================================================================================================
+# 敵対レビュー（追加指示2）
+# ====================================================================================================
+# ---- 1. 公開ページの規則は、要項モードの印のある要求だけに当たる
+@pytest.mark.parametrize("mode", [FetchMode.PAGE, FetchMode.PROBE])
+async def test_requests_without_the_spec_mark_never_use_the_open_page_rule(mode):
+    r = rig()  # SPEC_FETCH_ENABLED 相当（規則は有効）
+    assert_blocked_before_lookup(r, await get(r, mode=mode))  # 許可リストの外の公開ホスト → 拒否（今までどおり）
+
+
+async def test_only_the_marked_request_is_fetched_by_the_open_page_rule():
+    r = rig()
+    assert (await get(r, mode=FetchMode.SPEC_PAGE)).result.status == 200 and len(r.net.requests) == 1
+
+
+async def test_the_spec_mark_does_not_borrow_the_allow_list_or_the_repo_rule():
+    from app.contracts import RepoRawScope
+
+    prefixes = (UrlPrefix(host="svc.example.invalid", path_prefix="/fx/"),)
+    routes = {"svc.example.invalid/fx/a": Reply(status=302, headers=(("Location", "/fx/b"),)), "svc.example.invalid/fx/b": PAGE}
+    r = make_rig(routes, prefixes=prefixes, open_page=OpenPageScope())
+    res = (await r.fetch.fetch_ex(FetchRequest(url="https://svc.example.invalid/fx/a", mode=FetchMode.SPEC_PAGE))).result
+    assert res.status == 302 and res.body == b"" and len(r.net.requests) == 1  # 印つきは許可リストの中でも転送を追わない
+    off = make_rig(routes, prefixes=prefixes)  # 規則が無効なら、印つきは許可リストの中でも取らない
+    assert_blocked_before_lookup(off, await off.fetch.fetch_ex(FetchRequest(url="https://svc.example.invalid/fx/a", mode=FetchMode.SPEC_PAGE)))
+    raw = "raw.githubusercontent.com/o/r/HEAD/README.md"
+    r2 = make_rig({raw: Reply(headers=(("Content-Type", "text/plain"),), body=b"x")}, dns={"raw.githubusercontent.com": ((PUBLIC_IP,),)},
+                  prefixes=(), repo_raw=RepoRawScope())  # fmt: skip
+    assert_blocked_before_lookup(r2, await r2.fetch.fetch_ex(FetchRequest(url="https://" + raw, mode=FetchMode.SPEC_PAGE)))
+
+
+def test_s3_with_the_flag_refuses_unmarked_requests_outside_its_allow_list():
+    from fastapi.testclient import TestClient
+
+    from app.net.fetcher_server import create_fetcher_app
+
+    calls: list[str] = []
+
+    class Inner:
+        async def fetch(self, request):  # noqa: ANN001, ANN202
+            calls.append(request.url)
+            return await sf.fetch(request)
+
+    sf = make_rig({f"{HOST}/rules/2026": PAGE}, dns=DNS, prefixes=(), open_page=OpenPageScope()).fetch
+    c = TestClient(create_fetcher_app(load_settings({"ROLE": "fetcher", "SPEC_FETCH_ENABLED": "1"}), fetch=Inner()))
+    unmarked = c.post("/fetch", json={"url": URL}, headers={"authorization": "Bearer t"}).json()
+    marked = c.post("/fetch", json={"url": URL, "mode": "spec_page"}, headers={"authorization": "Bearer t"}).json()
+    assert unmarked["outcome"] == "blocked" and marked["outcome"] == "ok" and marked["status"] == 200
+
+
+def test_only_the_spec_pipeline_puts_the_mark_in_app_code():
+    from pathlib import Path
+
+    users = sorted(p.as_posix() for p in Path("app").rglob("*.py") if "SPEC_PAGE" in p.read_text(encoding="utf-8"))
+    assert users == ["app/agent/spec_read.py", "app/contracts.py", "app/net/fetcher_server.py", "app/net/safefetch.py"]
+
+
+# ---- 2. 窓は、ホスト名でなく当てる規則（印の有無）で選ぶ
+@pytest.mark.parametrize("github_raw", [False, True])
+def test_marked_requests_to_the_raw_host_count_toward_the_spec_window(github_raw):
+    from fastapi.testclient import TestClient
+
+    from app.contracts import FetchResult
+    from app.net.fetcher_server import create_fetcher_app
+
+    class Port:
+        async def fetch(self, request):  # noqa: ANN001, ANN202
+            return FetchResult(requested_url=request.url, final_url=request.url, outcome=FetchOutcome.OK, status=200, body=b"x", content_kind=ContentKind.PLAIN)
+
+    env = {"ROLE": "fetcher", "SPEC_FETCH_ENABLED": "1", **({"GITHUB_RAW_ENABLED": "1"} if github_raw else {})}
+    c = TestClient(create_fetcher_app(load_settings(env), fetch=Port()))
+    n = FETCH_LIMITS.spec_relay_requests_per_min
+    codes = [post(c, f"https://raw.githubusercontent.com/o/r/HEAD/notes{i}.md").status_code for i in range(n + 1)]
+    assert codes == [200] * n + [429]  # 10回目で 429（固定名でないパスは、印つきなら要項の窓に数える）
+    if github_raw:
+        fixed = [post(c, "https://raw.githubusercontent.com/o/r/HEAD/README.md", mode="page").status_code for _ in range(3)]
+        assert fixed == [200, 200, 200]  # 固定名（印なし）は従来どおり repo の窓（要項の窓が尽きていても通る）
+
+
+# ---- 4. 窓の値を固定する
+def test_the_spec_window_values_are_pinned():
+    assert (FETCH_LIMITS.spec_relay_requests_per_min, FETCH_LIMITS.spec_relay_bytes_per_min) == (9, 9 * 1024 * 1024)
+    assert FETCH_LIMITS.spec_max_page_bytes == 1024 * 1024
+
+
+def test_the_open_page_matcher_itself_requires_the_mark():
+    """_admit も印を先に見るが、照合の関数そのものも印の無い要求を通さない（二重の守り）。"""
+    from app.net.urlcheck import validate_url
+
+    sf = rig().fetch
+    n = validate_url(URL)
+    assert sf._open_page_match(URL, n, FetchMode.SPEC_PAGE) is True
+    assert sf._open_page_match(URL, n, FetchMode.PAGE) is False and sf._open_page_match(URL, n, FetchMode.PROBE) is False

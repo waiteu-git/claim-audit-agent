@@ -288,7 +288,7 @@ def test_happy_path_returns_the_requirement_list_only(monkeypatch):
     assert [q["demotion"] for q in res["requirements"]] == [None, None, "negation_or_exception", None, None, "no_obligation_word"]
     assert res["summary"]["requirements_total"] == 6 and [d["doc_id"] for d in res["docs"]] == ["D1"] and res["docs"][0]["label"] == "要項 1"
     assert res["budget"]["model_calls_left"] < 22 and res["summary"]["est_cost_micro_jpy"] > 0
-    assert calls == [] and len(port.requests) == 1 and port.requests[0].mode is FetchMode.PAGE
+    assert calls == [] and len(port.requests) == 1 and port.requests[0].mode is FetchMode.SPEC_PAGE  # 要項モードの印つき
     assert port.requests[0].url == parse_spec_url(SPEC_URL).url  # S3 へ渡すのは正規形だけ
     assert len(model.requests) == 1 and model.requests[0].tools == ()
     # 型でも判定が無いことが分かる（復元すると SpecOnlyRecord）
@@ -506,3 +506,139 @@ def test_hygiene_no_real_identifiers_in_new_files():
     for rel in ("app/spec_url.py", "app/agent/spec_read.py", "tests/test_spec_mode.py", "tests/test_spec_fetch_rule.py"):
         text = (ROOT / rel).read_text(encoding="utf-8")
         assert ".run" + ".app" not in text and "100." + "64." not in text, rel
+
+
+# ====================================================================================================
+# 敵対レビュー（追加指示2）
+# ====================================================================================================
+def test_normal_runs_and_the_github_path_never_put_the_spec_mark():
+    """S2 の通常の実行（ACQUIRE・AUTORUN の probe・fetch_link）と GitHub の経路は、要項モードの印を付けない。"""
+    from app.agent.planner import InspectMode
+    from app.agent.run import run_audit
+    from app.config import PRESETS
+    from app.fixtures.site import FixtureFetch, FixtureSite
+    from app.github_repo import RepoRef, fetch_repo_files
+    from tests.web_support import SELF, scripted_planner, scripted_reader
+
+    seen: list[FetchMode] = []
+
+    class Spy:
+        def __init__(self, inner):  # noqa: ANN001
+            self.inner = inner
+
+        async def fetch(self, request):  # noqa: ANN001, ANN202
+            seen.append(request.mode)
+            return await self.inner.fetch(request)
+
+    preset = PRESETS["sample_defect"]
+    for mode in (InspectMode.PLANNER, InspectMode.ROUTER):
+        fx = FixtureFetch(FixtureSite.load(), preset.allowed_prefixes[0].host, preset.allowed_prefixes)
+        run_async(run_audit(preset, fetch=Spy(fx), reader_model=scripted_reader(),
+                            planner_model=scripted_planner() if mode is InspectMode.PLANNER else None, inspect_mode=mode,
+                            settings=Settings(self_origin=SELF)))  # fmt: skip
+    gh_seen: list[FetchMode] = []
+
+    class RepoSpy:
+        async def fetch(self, request):  # noqa: ANN001, ANN202
+            gh_seen.append(request.mode)
+            return FetchResult(requested_url=request.url, final_url=request.url, outcome=FetchOutcome.OK, status=404)
+
+    run_async(fetch_repo_files(RepoRef(owner="example-owner", repo="example-repo"), RepoSpy()))
+    assert seen and FetchMode.SPEC_PAGE not in seen and {FetchMode.PAGE, FetchMode.PROBE} >= set(seen)
+    assert gh_seen and set(gh_seen) == {FetchMode.PAGE}
+
+
+# ---- 3. 成功時の精算も shield の中（2つのトランザクションの間で取り消されても日次の支出が残る）
+class CancelDuringSettle(YieldingState):
+    """精算の1つ目のトランザクション（total だけ）が始まった時に、利用者の切断（取り消し）を起こす。"""
+
+    def __init__(self, total_key: str) -> None:
+        super().__init__()
+        self.total_key = total_key
+        self.scope: anyio.CancelScope | None = None
+
+    async def transaction(self, keys, fn):  # noqa: ANN001, ANN201
+        if list(keys) == [self.total_key] and self.scope is not None:
+            self.scope.cancel()
+            self.scope = None
+        return await super().transaction(keys, fn)
+
+
+def _settle_then_cancel(deps, settings, store):  # noqa: ANN001, ANN202
+    async def go():
+        adm = await deps.quota.admit(JUDGE, judge_only=True)
+
+        async def consume():
+            with anyio.CancelScope() as sc:
+                store.scope = sc
+                async for _ in spec_events(deps, [parse_spec_url(SPEC_URL)], adm):
+                    pass
+
+        await consume()
+        day = next(v for k, v in store.docs.items() if "/day/" in k)
+        return store.docs[f"{settings.env.value}/total"], day
+
+    return run_async(go())
+
+
+def test_a_cancel_between_the_two_settle_transactions_still_records_the_daily_spend():
+    settings = spec_settings()
+    store = CancelDuringSettle(f"{settings.env.value}/total")
+    deps = make_deps(settings, runner=never_live, store=store, spec_fetch=FakePagePort, spec_model=lambda _d: reader())
+    total, day = _settle_then_cancel(deps, settings, store)
+    assert total["reservations"] == {} and 0 < total["spent"]["judge"] < deps.quota.reservation  # 実費（予約額の最悪値ではない）
+    assert day.get("spent", {}).get("judge") == total["spent"]["judge"]  # 日次の支出も書き切った
+
+
+def test_control_without_the_shield_the_daily_spend_would_be_lost(monkeypatch):
+    class NoShield:
+        def __init__(self, shield=False):  # noqa: ANN001
+            self._scope = anyio.CancelScope()
+
+        def __enter__(self):  # noqa: ANN204
+            return self._scope.__enter__()
+
+        def __exit__(self, *a):  # noqa: ANN002, ANN204
+            return self._scope.__exit__(*a)
+
+    monkeypatch.setattr(web_app, "anyio", types.SimpleNamespace(CancelScope=NoShield))
+    settings = spec_settings()
+    store = CancelDuringSettle(f"{settings.env.value}/total")
+    deps = make_deps(settings, runner=never_live, store=store, spec_fetch=FakePagePort, spec_model=lambda _d: reader())
+    total, day = _settle_then_cancel(deps, settings, store)
+    assert day.get("spent", {}).get("judge") is None  # 日次の支出が欠ける＝上のテストが shield を見ている
+    assert total.get("reservations") or total.get("spent", {}).get("judge")  # 精算は途中で止まった（予約が残るか、total だけ書けた）
+
+
+# ---- 4. SpecOnlyRecord は判定以外（観測・矛盾・判定件数）も持てない
+def test_spec_only_record_refuses_observations_contradictions_and_verdict_counts():
+    from app.contracts import Contradiction, ContradictionBasis, Observation, ObsCode, ObsOutcome, Slot, ToolName, VerdictLabel
+
+    _, ev = run_spec(spec_deps())
+    res = first(ev, "result")
+    rec = SpecOnlyRecord.restore(res, seal=VerificationSeal.issue("tests"))
+    rec._all_verdicts()  # 対照: そのままなら通る
+    obs = Observation(obs_id="O1", tool=ToolName.HTTP_PROBE, code=ObsCode.OK, outcome=ObsOutcome.PASS)
+    bad = json.loads(json.dumps(res))
+    bad["observations"] = [obs.model_dump(mode="json")]
+    with pytest.raises(ValueError, match="判定・観測・矛盾"):
+        SpecOnlyRecord.restore(bad, seal=VerificationSeal.issue("tests"))
+    con = Contradiction(slot=Slot.DEADLINE, req_ids=("R1", "R2"), basis=ContradictionBasis.TOKEN_DIFF, tokens=("a", "b"))
+    for update, msg in (({"contradictions": (con,)}, "判定・観測・矛盾"), ({"observations": (obs,)}, "判定・観測・矛盾"),
+                        ({"summary": rec.summary.model_copy(update={"verdict_counts": {VerdictLabel.PASS: 1}})}, "判定の件数")):  # fmt: skip
+        with pytest.raises(ValueError, match=msg):
+            rec.model_copy(update=update)._all_verdicts()
+
+
+# ---- 4. S2 側も、転送を経た結果は読まない
+def test_a_result_that_went_through_a_redirect_is_not_read_on_the_s2_side():
+    from app.contracts import RedirectHop
+
+    def redirected(u):  # noqa: ANN001, ANN202
+        hop = RedirectHop(url=u, status=302, location="/elsewhere", followed=True, in_scope=True)
+        return FetchResult(requested_url=u, final_url=u + "x", redirects=(hop,), outcome=FetchOutcome.OK, status=200,
+                           body=SPEC_HTML.encode(), content_kind=ContentKind.HTML)  # fmt: skip
+
+    model = reader()
+    _, ev = run_spec(spec_deps(FakePagePort(default=redirected), model))
+    assert first(ev, "error")["code"] == "FETCH_FAILED" and model.requests == []

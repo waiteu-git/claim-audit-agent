@@ -39,6 +39,7 @@ from app.contracts import (
     ContentKind,
     DocRole,
     FetchKind,
+    FetchMode,
     FetchOutcome,
     FetchPort,
     FetchRequest,
@@ -144,7 +145,7 @@ async def read_spec_pages(
         result: FetchResult | None = None
         code = "fetched"
         try:
-            result = await fetch.fetch(FetchRequest(url=ref.url))
+            result = await fetch.fetch(FetchRequest(url=ref.url, mode=FetchMode.SPEC_PAGE))  # 要項モードの印（S3 の公開ページの規則はこの印にだけ当たる）
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001  取得層の想定外。分類した ErrorCode だけを残す（例外の中身は出さない）

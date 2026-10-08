@@ -190,7 +190,7 @@ def test_s3_stops_at_its_own_window_cap_too():
     from app.config import FetchLimits
 
     client_, calls = relay_app(enabled=True, limits=FetchLimits(spec_relay_requests_per_min=3))
-    codes = [s3_post(client_, parse_spec_url(u).url).status_code for u in (U1, U2, U3, "https://d4.example/x")]
+    codes = [s3_post(client_, parse_spec_url(u).url).status_code for u in (U1, U2, U3, "https://d4.example/x")]  # 印つき
     assert codes == [200, 200, 200, 429] and len(calls) == 3
 
 

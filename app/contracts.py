@@ -540,6 +540,10 @@ class FetchMode(StrEnum):
 
     PAGE = "page"  # ACQUIRE / fetch_link（本文を最大 1MiB）
     PROBE = "probe"  # http_probe（本文先頭 64KB）
+    # 要項モード（第11弾）の取得だけが付ける明示の印。S3 の公開ページの規則（OpenPageScope）は、この印のある要求にだけ当たる。
+    # 印の無い要求（通常の実行の ACQUIRE・fetch_link・http_probe・GitHub の固定ファイル）は、今までどおり許可リストと RepoRawScope だけ。
+    # 印のある要求は、許可リストにも RepoRawScope にも当てない（公開ページの規則だけで通るか決まる）
+    SPEC_PAGE = "spec_page"
 
 
 class FetchKind(StrEnum):
@@ -744,7 +748,8 @@ class OpenPageScope(_Frozen):
     host の形（IP の直書き・localhost・単一ラベル・.local/.internal 等の拒否）とポート 443 は net.urlcheck.validate_url が、
     私的・予約済みアドレスの拒否（DNS 解決後）は既存の GuardedResolver が見る。この型が見るのは、正規化の後の host・path が
     空でないことだけ（形の定義を2か所に持たない）。転送を追わない・GET の page だけ・text/html と text/plain だけ・本文の上限は、
-    SafeFetch がこの規則で通った要求にだけ掛ける。許可リストに合う URL は従来どおり許可リストの扱い（この規則は使わない）。
+    SafeFetch がこの規則で通った要求にだけ掛ける。この規則が当たるのは FetchMode.SPEC_PAGE の印のある要求だけで、その要求には許可リスト・
+    RepoRawScope を当てない（印の無い要求は今までどおり許可リストと RepoRawScope だけ）。
     """
 
     def matches(self, host: str, path: str) -> bool:
