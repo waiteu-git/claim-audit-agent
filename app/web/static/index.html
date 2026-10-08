@@ -12,7 +12,7 @@
 <header class="top">
   <div class="brand">
     <h1>要項監査エージェント</h1>
-    <p class="lead">要項・FAQ から要件を原文の引用つきで取り出し、提出物を実際に検査して、証拠つきで判定します（読み取り専用）。</p>
+    <p class="lead">要項から要件を、根拠の一文つきで取り出し、提出物を実際に確かめて、判定します（読み取り専用）。</p>
   </div>
   <p id="mode" class="mode mode-unknown" role="status" aria-live="polite">状態を確認しています…</p>
 </header>
@@ -20,8 +20,16 @@
 <main>
   <section class="panel" aria-labelledby="h-presets">
     <h2 id="h-presets">1. 監査する対象を選ぶ</h2>
-    <p class="note">入力欄はありません。用意した3つの対象から選びます（任意の URL は受け付けません）。</p>
     <div id="presets" class="cards" role="radiogroup" aria-labelledby="h-presets"></div>
+    <div id="preset-detail" class="preset-detail" hidden>
+      <p id="detail-note" class="detail-note" hidden></p>
+      <h3 id="h-detail" class="detail-head">この対象の中身を読む</h3>
+      <ul id="detail-links" class="links" aria-labelledby="h-detail"></ul>
+      <details id="detail-planted" class="more-box" hidden>
+        <summary>仕込んだ欠陥・偽の命令を見る</summary>
+        <ol id="planted-list" class="planted"></ol>
+      </details>
+    </div>
     <div class="actions">
       <button id="run" type="button" class="primary" disabled>監査を実行</button>
       <p id="run-note" class="note" aria-live="polite"></p>
@@ -29,62 +37,79 @@
     <p id="judge-note" class="note" hidden></p>
   </section>
 
-  <section id="result" class="panel" aria-labelledby="h-result" hidden>
-    <h2 id="h-result">2. 結果</h2>
+  <section id="result" class="result" aria-labelledby="h-result" hidden>
+    <h2 id="h-result" class="sr-only">結果</h2>
     <p id="run-mode" class="run-mode" role="status" aria-live="polite"></p>
-    <div id="warning" class="warning" role="alert" hidden></div>
+    <div id="warning" class="warnband" role="alert" hidden></div>
     <div id="status-note" class="status-note" hidden></div>
-    <div id="summary" class="summary" aria-live="polite"></div>
-    <section id="who-band" class="band" aria-labelledby="h-who" hidden>
-      <h3 id="h-who">誰が決めたか（実行の内訳）</h3>
-      <p id="who-sum" class="band-sum"></p>
-    </section>
-    <div id="contradictions" class="contradictions" hidden></div>
 
-    <section id="quote-band" class="band" aria-labelledby="h-quote" hidden>
-      <h3 id="h-quote">コードが検証した引用</h3>
-      <p id="quote-band-sum" class="band-sum"></p>
-      <ul id="quote-examples" class="examples" aria-label="モデルの引用をコードが弾いた例" hidden></ul>
+    <section id="hero" class="hero" aria-labelledby="hero-head" hidden>
+      <h3 id="hero-head" class="headline"></h3>
+      <p id="hero-sub" class="hero-sub" hidden></p>
+      <ul id="summary" class="stats"></ul>
     </section>
 
-    <section id="replan-band" class="band" aria-labelledby="h-replan" hidden>
-      <h3 id="h-replan">判断が変わった場面</h3>
-      <p class="note">検査の結果が不確定だったので、次の手を変えた場面です（変えたことはコードが観測から検出して記録します）。</p>
-      <ol id="replan-steps" class="steps"></ol>
-      <p id="replan-end" class="band-sum" hidden></p>
+    <div id="contradictions" class="contra" hidden></div>
+
+    <section id="list-section" class="list" aria-labelledby="h-list" hidden>
+      <h3 id="h-list" class="list-title">要件ごとの判定</h3>
+      <p id="list-status" class="sr-only" role="status" aria-live="polite"></p>
+      <div id="reqs" class="groups"></div>
     </section>
 
-    <div class="table-wrap">
-      <table id="reqs">
-        <caption>要件と判定（判定は観測からコードが決めます。モデルは書けません）</caption>
-        <thead>
-          <tr><th scope="col">ID</th><th scope="col">種別</th><th scope="col">要件（原文の引用）</th><th scope="col">出典</th><th scope="col">判定</th><th scope="col">理由・証拠</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
+    <details id="planted-band" class="box" hidden>
+      <summary>仕込んだ欠陥と、見つけた結果</summary>
+      <ol id="planted-result" class="planted inner"></ol>
+    </details>
 
     <aside id="source" class="source" aria-labelledby="h-source" hidden>
       <div class="source-head">
         <h3 id="h-source">出典</h3>
-        <button id="source-close" type="button">閉じる</button>
+        <button id="source-close" type="button" class="btn">閉じる</button>
       </div>
       <dl id="source-body"></dl>
     </aside>
 
-    <details id="budget-box" class="box">
-      <summary>予算ゲージ（この実行の残り）</summary>
-      <div id="budget" class="budget"></div>
+    <details id="trust-band" class="box" hidden>
+      <summary>判定の根拠</summary>
+      <div class="inner">
+        <p id="trust-who"></p>
+        <p id="trust-quote" class="sub" hidden></p>
+        <details id="trust-example" class="more-box" hidden>
+          <summary>引用を照合した例を見る</summary>
+          <ol id="trust-flow" class="flow"></ol>
+        </details>
+      </div>
     </details>
-    <details id="trace-box" class="box">
-      <summary>トレース（<span id="trace-count">0</span> 件）</summary>
-      <ol id="trace" class="trace"></ol>
+
+    <details id="replan-band" class="box" hidden>
+      <summary>調べ方を変えた場面</summary>
+      <div class="inner">
+        <p class="sub">検査の結果がはっきりしなかったので、次の手を変えた場面です。変えたことは、コードが検査の結果の並びから記録しました。</p>
+        <ol id="replan-steps" class="steps"></ol>
+        <p id="replan-end" class="sub" hidden></p>
+      </div>
+    </details>
+
+    <details id="run-box" class="box">
+      <summary>実行の詳細</summary>
+      <div class="inner">
+        <dl id="facts" class="facts"></dl>
+        <details id="budget-box" class="box">
+          <summary>実行の上限と、残り</summary>
+          <div id="budget" class="budget"></div>
+        </details>
+        <details id="trace-box" class="box">
+          <summary>実行の記録（<span id="trace-count">0</span> 件）</summary>
+          <ol id="trace" class="trace"></ol>
+        </details>
+      </div>
     </details>
   </section>
 </main>
 
 <footer class="foot">
-  <p>判定は観測からコードが決めます。モデルは書けません。サンプルの要項・提出物はすべて架空です。</p>
+  <p>判定は、確かめた結果からコードが決めます。AIは判定を書けません。サンプルの要項・提出物はすべて架空です。</p>
 </footer>
 </body>
 </html>
