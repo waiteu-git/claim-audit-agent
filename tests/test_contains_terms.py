@@ -201,13 +201,13 @@ def verdict(r, doc, kind_obs=None, extra_docs=()):
 def test_found_is_a_presumed_pass_not_a_pass():
     v = verdict(req(), sub("テスト用アカウントは judge-01 です。"))
     assert v.label is C.VerdictLabel.PRESUMED_PASS
-    assert evidence_label(check_contains_terms(req(), sub("テスト用アカウント"), "O1")) == "求められた語が本文にある（自己申告）"
+    assert evidence_label(check_contains_terms(req(), sub("テスト用アカウント"), "O1")) == "求められた語が提出物のページにある（自己申告）"
 
 
 def test_absent_on_a_complete_content_doc_is_a_failure_for_a_required_requirement():
     v = verdict(req(), sub("これは地図のアプリです。" * 5))
     assert v.label is C.VerdictLabel.FAIL and "見つかりません" in v.reason
-    assert v.evidence[0].label == "求められた語が本文に無い"
+    assert v.evidence[0].label == "求められた語が提出物のページに無い"
 
 
 @pytest.mark.parametrize("kind", [Kind.OPTIONAL, Kind.REQUEST])

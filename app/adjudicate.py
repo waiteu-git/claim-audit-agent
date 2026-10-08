@@ -30,7 +30,7 @@
 
 理由コードの対応（契約の12語に収める。足りない語は契約監査の open_questions に書いた）:
   TRANSIENT→TRANSIENT／SPA_SHELL→NEEDS_JS／BLOCKED→OUT_OF_SCOPE（追跡しなかった転送）か FETCH_BLOCKED／UNSUPPORTED_TYPE→UNSUPPORTED_TYPE／
-  LIMIT_UNDECIDABLE→HUMAN_ONLY（数え方は人が決める）／too_large→TRUNCATED／転送の上限→FETCH_BLOCKED／検査できないクラス→OUT_OF_SCOPE／他→NO_EVIDENCE。
+  LIMIT_UNDECIDABLE→HUMAN_ONLY（数え方は人が決める）／too_large→TRUNCATED／転送の上限→FETCH_BLOCKED／検査できないクラス→引用の文面から HUMAN_ONLY／FUTURE／NOT_PUBLIC（迷えば OUT_OF_SCOPE。checks/unverifiable_reason）／他→NO_EVIDENCE。
 """
 import re
 import unicodedata
@@ -40,6 +40,7 @@ from enum import StrEnum
 
 from app.checks.class_screen import quote_supports_class
 from app.checks.probe_facts import TARGET_SUBMISSION
+from app.checks.unverifiable_reason import unverifiable_reason
 from app.contracts import (
     CHECK_CLASS_CHECKER,
     REASON_LABEL_JA,
@@ -231,18 +232,18 @@ def evidence_label(o: Observation) -> str:
                 return "403・アクセス拒否"
             return "403・認証か取得元の制限か不明"
         if access == "form_on_content":
-            return _clip(f"password欄あり・本文{_n(_int(o, 'text_len'))}字（壁と言い切れず）", 60)
+            return _clip(f"password欄あり・ページの文字{_n(_int(o, 'text_len'))}字（壁と言い切れず）", 60)
         if access == "form_unconfirmed":
             return "password欄らしい記述あり（確認できず）"
         if access == "login_prompt":
-            return _clip(f"ログインを促す画面・本文{_n(_int(o, 'text_len'))}字（壁と言い切れず）", 60)
+            return _clip(f"ログインを促す画面・ページの文字{_n(_int(o, 'text_len'))}字（壁と言い切れず）", 60)
         if access == "error_page":
             return _clip(f"200・拒否やエラーの文言の短い画面（{_n(_int(o, 'text_len'))}字）", 60)
         return "認証壁の印"
     if c is ObsCode.NO_AUTH_WALL:
         return _clip(f"{_int(o, 'status') or ''}・ログイン不要で開ける", 60)
     if c is ObsCode.SPA_SHELL:
-        return _clip(f"JS描画が必要（本文{_n(_int(o, 'text_len'))}字）", 60)
+        return _clip(f"JS描画が必要（ページの文字{_n(_int(o, 'text_len'))}字）", 60)
     if c is ObsCode.TRANSIENT:
         return "一時的に取得できず"
     if c is ObsCode.BLOCKED:
@@ -265,16 +266,16 @@ def evidence_label(o: Observation) -> str:
         if access == "redirect_limit":
             return "転送が上限を超えた"
         if access == "probe_partial":
-            return _clip(f"先頭64KBだけでは判断できず（本文{_n(_int(o, 'text_len'))}字）", 60)
+            return _clip(f"先頭64KBだけでは判断できず（ページの文字{_n(_int(o, 'text_len'))}字）", 60)
         if access == "empty_page":
             return "文字が見えない・埋め込みだけ（判断できず）"
         if _str(o, "reason") == "probe_conflict":
             return "同じURLの観測が食い違う"
         return "観測に失敗"
     if c is ObsCode.TERMS_FOUND:
-        return "求められた語が本文にある（自己申告）"
+        return "求められた語が提出物のページにある（自己申告）"
     if c is ObsCode.TERMS_ABSENT:
-        return "求められた語が本文に無い"
+        return "求められた語が提出物のページに無い"
     if c is ObsCode.LEAK_FOUND:
         kinds = [f"{ja}{_n(_int(o, key))}件" for key, ja in _LEAK_KIND_JA if _int(o, key)]
         return _clip("公開してはいけない文字列あり" + (f"（{'・'.join(kinds)}）" if kinds else ""), 60)
@@ -296,7 +297,7 @@ def _fail_reason(o: Observation) -> str:
     c = o.code
     if c is ObsCode.OVER_LIMIT:
         return _clip(
-            f"提出物の本文は{_n(_int(o, 'chars_with_ws'))}字（空白を除くと{_n(_int(o, 'chars_no_ws'))}字）で、"
+            f"提出物のページの文字は{_n(_int(o, 'chars_with_ws'))}字（空白を除くと{_n(_int(o, 'chars_no_ws'))}字）で、"
             f"要項の上限{_n(_int(o, 'limit'))}字を超えています。",
             140,
         )
@@ -318,9 +319,9 @@ def _fail_reason(o: Observation) -> str:
             return "提出物のURLが見つかりません（404/410）。審査員が開けません。"
         return _clip(f"提出物のURLがエラー（{_int(o, 'status') or '?'}）を返しました。審査員が開けない恐れがあります。", 140)
     if c is ObsCode.TERMS_ABSENT:
-        return "要項が求める案内（語）が、提出物の本文に見つかりません。"
+        return "要項が求める案内（語）が、提出物のページに見つかりません。"
     if c is ObsCode.LEAK_FOUND:
-        return "提出物の本文に、公開してはいけない文字列が含まれています。"
+        return "提出物のページに、公開してはいけない文字列が含まれています。"
     return "観測が要項に適合していません。"
 
 
@@ -328,7 +329,7 @@ def _pass_reason(o: Observation) -> str:
     c = o.code
     if c is ObsCode.WITHIN_LIMIT:
         return _clip(
-            f"提出物の本文は{_n(_int(o, 'chars_with_ws'))}字で、上限{_n(_int(o, 'limit'))}字以内です"
+            f"提出物のページの文字は{_n(_int(o, 'chars_with_ws'))}字で、上限{_n(_int(o, 'limit'))}字以内です"
             "（空白あり・なし、どの数え方でも）。",
             140,
         )
@@ -337,8 +338,20 @@ def _pass_reason(o: Observation) -> str:
     if c is ObsCode.SIGNATURE_PRESENT:
         return "Cloud Run のドメインと Google Frontend の応答を確認しました。"
     if c is ObsCode.NO_LEAK:
-        return "提出物の本文に、公開してはいけない文字列は見つかりませんでした。"
+        return "提出物のページに、公開してはいけない文字列は見つかりませんでした。"
     return "観測が要項に適合しています。"
+
+
+# 検査できないクラスの要件の理由文（コードごとに1つの固定文。引用の中身・数値・URL は埋め込まない）
+_NONE_CLASS_TEXT: dict[UnverifiableReason, str] = {
+    UnverifiableReason.HUMAN_ONLY: "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+    UnverifiableReason.FUTURE: "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+    UnverifiableReason.NOT_PUBLIC: "非公開の情報が要るため、この道具は検査していません。ご自身で確認してください。",
+    UnverifiableReason.OUT_OF_SCOPE: "この道具では検査していません。要項を読んで、ご自身で確認してください。",
+}
+
+
+GATE_REASON_TEXTS = frozenset(_NONE_CLASS_TEXT.values())  # report が、見出しと重なる固定文の前に理由ラベルを付けないために使う
 
 
 def _unverifiable_text(code: UnverifiableReason, o: Observation | None = None) -> str:
@@ -366,7 +379,7 @@ def _unverifiable_text(code: UnverifiableReason, o: Observation | None = None) -
         if access == "form_unconfirmed":
             return "提出物のURLの画面に、password欄らしい記述がありますが、入力欄と確認できませんでした。"
     if o is not None and o.code is ObsCode.ERROR and _str(o, "access") == "probe_partial":
-        return "提出物のURLの先頭64KBが短い本文のうちに尽きたため、続きにログイン画面があるか判断できません。"
+        return "提出物のURLの先頭64KBにはページの文字が少なく、続きにログイン画面があるか判断できません。"
     if o is not None and o.code is ObsCode.ERROR and _str(o, "access") == "empty_page":
         return "提出物のURLの画面は、文字が見えないか埋め込みだけで、ログインなしで中身を見られるか判断できません。"
     return label + "。"
@@ -418,6 +431,17 @@ def _effective(o: Observation, docs: Mapping[str, DocMeta]) -> _Ev:
     return _Ev(o, _K.NONE, _inconclusive_reason(o))
 
 
+# Planner（モデル）が前提なしで選べる理由コード（governor.PLANNER_MARK_CODES のうち、前提の観測を要しないもの）。
+# 検査できないクラスの要件では、この印を採らず、引用の文面から関門（checks/unverifiable_reason）が理由と固定文を決める。
+_MODEL_CHOSEN_CODES = frozenset(
+    {UnverifiableReason.HUMAN_ONLY, UnverifiableReason.FUTURE, UnverifiableReason.OUT_OF_SCOPE, UnverifiableReason.NOT_PUBLIC}
+)
+
+
+def _gate_overrides_mark(m: UnverifiableMark, checker: Checker | None) -> bool:
+    return checker is None and m.by_planner and m.reason_code in _MODEL_CHOSEN_CODES
+
+
 def _mark_valid(m: UnverifiableMark, obs_by_id: Mapping[str, Observation]) -> bool:
     """Planner の印は P-UNVERIF-01 の前提を再確認する。コードが付けた印は無条件に採る。
 
@@ -458,13 +482,13 @@ _REFERENCE_TAIL = "参考として表示し、判定の集計に含めません�
 def _reference_reason(req: VerifiedRequirement) -> str:
     """推測（参考）にした理由の文。引用が原文と一致しているのに「原文に引用できない」と書かない（降格の理由ごとに言い分ける）。"""
     if req.span is None:  # 引用が逐語一致せず、モデルの言い換え（推論）だけが残った
-        return "原文に引用できないモデルの推論のため、" + _REFERENCE_TAIL
+        return "要項に引用できないモデルの推論のため、" + _REFERENCE_TAIL
     if req.demotion is DemotionReason.NO_OBLIGATION_WORD:
-        return "引用は原文と一致しますが、義務の語が無いため、確かな要件としては扱わず、" + _REFERENCE_TAIL
+        return "引用は要項と一致しますが、義務の語が無いため、確かな要件としては扱わず、" + _REFERENCE_TAIL
     if req.demotion is DemotionReason.NEGATION_OR_EXCEPTION:
-        return "引用は原文と一致しますが、否定・例外を含む文のため、確かな要件としては扱わず、" + _REFERENCE_TAIL
+        return "引用は要項と一致しますが、否定・例外を含む文のため、確かな要件としては扱わず、" + _REFERENCE_TAIL
     if req.demotion is DemotionReason.SENTENCE_TOO_LONG:
-        return "引用は原文と一致しますが、文が長く、範囲を確かめきれないため、確かな要件としては扱わず、" + _REFERENCE_TAIL
+        return "引用は要項と一致しますが、文が長く、範囲を確かめきれないため、確かな要件としては扱わず、" + _REFERENCE_TAIL
     return "モデルが推測と申告した要件のため、" + _REFERENCE_TAIL  # 引用は検証済みで、申告が推測のまま
 
 
@@ -517,7 +541,7 @@ def _decide(
         return Verdict(
             req_id=req.req_id,
             label=VerdictLabel.PRESUMED_PASS,
-            reason="提出物の本文に求められた語が見つかりました。語が在ることの証明であり、内容の保証ではありません。",
+            reason="提出物のページに求められた語が見つかりました。語が在ることの証明であり、内容の保証ではありません。",
             evidence=_refs(weaks),
         )
     for o in absents:  # 必須要件で語が無く、文書が完全なら不適合
@@ -527,7 +551,7 @@ def _decide(
                 req_id=req.req_id, label=VerdictLabel.FAIL, reason=_fail_reason(o), evidence=_refs([o])
             )
 
-    if mark is not None and _mark_valid(mark, obs_by_id):
+    if mark is not None and not _gate_overrides_mark(mark, checker) and _mark_valid(mark, obs_by_id):
         premise = obs_by_id.get(mark.premise_obs_id) if mark.premise_obs_id is not None else None
         return _unverifiable(req, mark.reason_code, _unverifiable_text(mark.reason_code), [premise] if premise else [])
 
@@ -546,7 +570,14 @@ def _decide(
         reason = e.reason or UnverifiableReason.NO_EVIDENCE
         return _unverifiable(req, reason, _unverifiable_text(reason, e.obs), [e.obs])
 
-    code = UnverifiableReason.OUT_OF_SCOPE if checker is None else UnverifiableReason.NO_EVIDENCE
+    if checker is None:  # 検査できないクラス: 引用の文面から、人が確かめる条件か・約束か等を決める（迷えば OUT_OF_SCOPE）
+        span = req.span
+        if span is None or span.quote_clipped:  # 同梱用に切った引用は文の前半だけ。前半の語で理由を決めない
+            code = UnverifiableReason.OUT_OF_SCOPE
+        else:
+            code = unverifiable_reason(span.original_span, req.kind)
+        return _unverifiable(req, code, _NONE_CLASS_TEXT[code])
+    code = UnverifiableReason.NO_EVIDENCE
     return _unverifiable(req, code, _unverifiable_text(code))
 
 

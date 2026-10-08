@@ -17,6 +17,7 @@
   checks/               http_probe・auth_wall・text_length・cloud_run_signature・html_signals・class_screen・registry・leak_scan・
                         contains_terms（可視テキストの語の有無。固定辞書）・autorun（AUTORUN の計画と実行。第5弾）・
                         repo_inspect（リポジトリの固定ファイルから事実だけを返す純関数。判定は書かない。第7弾の土台）
+                        unverifiable_reason（検査できないクラスの確認不能の理由コード。引用の文面だけで決める純関数）
   adjudicate.py         判定表（要件×観測 → Verdict。判定を書けるのはこのコードだけ）と、要項間の矛盾（find_contradictions）
   agent/                reader・planner（Planner ループと router）・governor・budget・tools・trace・state・acquire・autorun_phase・run・report
                         （第2弾 G2。autorun_phase は第5弾: READ の後・INSPECT の前に、前提が揃う検査を Governor 経由で必ず走らせる）
