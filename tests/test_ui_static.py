@@ -292,6 +292,18 @@ def test_the_headline_numbers_open_their_group_and_the_names_follow_the_ruling()
     assert "受け付けず" in JS  # 「棄却」でなく「受け付けず」
 
 
+def test_the_zero_fix_headline_does_not_repeat_the_zero_count_and_the_attack_is_called_by_its_common_name():
+    """本人の指摘: 直す点が0の時、見出し「直す点は見つかりませんでした」と数の「直す点 0」は同じことの繰り返し。
+    見出しは「確かめた範囲では、問題なく通過しました。」（確かめていない項目まで通ったとは言わない）。
+    「偽の命令」は分かりにくいので、画面・説明では「プロンプトインジェクション」と呼ぶ。"""
+    block = JS.split("function renderHero")[1].split("function renderWarning")[0]
+    assert '"確かめた範囲では、問題なく通過しました。"' in block
+    assert "直す点は見つかりませんでした" not in JS
+    for name, text in UI_FILES.items():
+        assert "偽の命令" not in text, name
+    assert "プロンプトインジェクション" in JS and "プロンプトインジェクション" in HTML
+
+
 def test_a_saved_run_does_not_draw_the_time_gauge_because_its_cap_may_differ_from_todays():
     block = JS.split("function renderBudget")[1].split("function jumpTo")[0]
     assert "withTime" in block and 'key === "wall_ms_left" && !withTime' in block

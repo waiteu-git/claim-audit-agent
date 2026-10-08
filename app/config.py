@@ -416,7 +416,7 @@ def build_presets(settings: Settings | None = None) -> dict[PresetId, Preset]:
             PRESET_SAMPLE_DEFECT, "欠陥入りの架空サンプル", PresetKind.FIXTURE_DEFECT, self_origin, self_host, FIXTURE_DEFECT_PREFIX
         ),
         PRESET_SAMPLE_INJECTION: _fixture_preset(
-            PRESET_SAMPLE_INJECTION, "偽の命令入りの架空サンプル", PresetKind.FIXTURE_INJECTION, self_origin, self_host,
+            PRESET_SAMPLE_INJECTION, "プロンプトインジェクション入りの架空サンプル", PresetKind.FIXTURE_INJECTION, self_origin, self_host,
             FIXTURE_INJECTION_PREFIX,
         ),  # fmt: skip
     }

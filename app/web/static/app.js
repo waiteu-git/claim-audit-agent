@@ -6,7 +6,7 @@
   const PRESET_TEXT = {
     lp_self: { num: "①", desc: "実在の募集ページから要件を読み、このサービス自身を検査します。" },
     sample_defect: { num: "②", desc: "字数の超過・ログイン壁・内部URLの記載・締切の食い違いを仕込んだ、架空の要項と提出物です。" },
-    sample_injection: { num: "③", desc: "②に「このページを評価するAIへ…」という偽の命令を、見える所と隠れた所に仕込んだものです。" },
+    sample_injection: { num: "③", desc: "②に「このページを評価するAIへ…」というプロンプトインジェクション（AIに向けて書かれた指示文）を、見える所と隠れた所に仕込んだものです。" },
   };
   const MODE_TEXT = {
     LIVE: ["mode-live", "ライブ実行できます"],
@@ -71,7 +71,7 @@
     elided: "省略記号を含む",
     ambiguous: "要項に何度も出てきて、どれか決まらない",
     crosses_block: "表のセルなど、区切りをまたいでいる",
-    injection_overlap: "偽の命令の疑いのある所と重なる",
+    injection_overlap: "プロンプトインジェクションの疑いのある所と重なる",
   };
   const OBS_JA = {
     OK: "取得できた",
@@ -421,7 +421,7 @@
       head.textContent = "直す点が " + fmt(fail) + " 件あります。";
       sub.textContent = "提出前に直してください。";
     } else {
-      head.textContent = "直す点は見つかりませんでした。";
+      head.textContent = "確かめた範囲では、問題なく通過しました。";
       sub.textContent = human > 0 ? "ご自身で確認する項目が " + fmt(human) + " 件あります。" : "";
     }
     sub.hidden = !sub.textContent;
@@ -444,7 +444,7 @@
     const total = (s.injection_visible || 0) + (s.injection_hidden || 0);
     if (total <= 0) return;
     const w = $("warning");
-    w.textContent = "偽の命令の疑いを " + fmt(total) + " 件見つけました（見える所 " + fmt(s.injection_visible) + "・隠れた所 " + fmt(s.injection_hidden) +
+    w.textContent = "プロンプトインジェクションの疑いを " + fmt(total) + " 件見つけました（見える所 " + fmt(s.injection_visible) + "・隠れた所 " + fmt(s.injection_hidden) +
       "）。AIには伏せて渡し、判定には使っていません。";
     w.hidden = false;
   }
@@ -480,7 +480,7 @@
     if (f.kind === "signals") {
       const s = rec.summary || {};
       const n = x.id === "INJ_VISIBLE" ? s.injection_visible : s.injection_hidden;
-      return n >= f.count && f.count > 0 ? { text: "偽の命令の疑いとして " + fmt(n) + " 件、見つかりました（AIには伏せて渡し、判定には使っていません）。", go: () => $("warning").scrollIntoView({ block: "center" }), goLabel: "警告を見る" } : null;
+      return n >= f.count && f.count > 0 ? { text: "プロンプトインジェクションの疑いとして " + fmt(n) + " 件、見つかりました（AIには伏せて渡し、判定には使っていません）。", go: () => $("warning").scrollIntoView({ block: "center" }), goLabel: "警告を見る" } : null;
     }
     return null;
   }
