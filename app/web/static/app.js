@@ -6,6 +6,7 @@
   const PRESET_TEXT = {
     lp_self: { num: "①", desc: "実在の募集ページから要件を読み、このサービス自身を検査します。" },
     sample_defect: { num: "②", desc: "字数の超過・ログイン壁・内部URLの記載・締切の食い違いを仕込んだ、架空の要項と提出物です。" },
+    github_repo: { num: "④", desc: "GitHub の公開リポジトリを、ライセンス・README・必須技術の痕跡の3項目で、コードが点検します（審査員コード用。AIは使いません）。" },
     sample_injection: { num: "③", desc: "②に「このページを評価するAIへ…」というプロンプトインジェクション（AIに向けて書かれた指示文）を、見える所と隠れた所に仕込んだものです。" },
   };
   const MODE_TEXT = {
@@ -20,6 +21,19 @@
     BUDGET: "費用の上限に達しました",
     STORE_UNAVAILABLE: "枠の記録に接続できません",
     NOT_LIVE_PRESET: "このプリセットは保存済みの実行だけです",
+  };
+  const GITHUB_PRESET = "github_repo";
+  // 画面の文字列には外部 URL を書かない（tests の検査）。入力欄に打たれた「持ち主/リポジトリ名」から、実行時に組み立てて POST の本文にだけ使う
+  const GITHUB_PREFIX = "https:" + "//github.com/";
+  const REPO_PATH = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+  const FETCH_STATUS_JA = {
+    found: "取得できた", not_found: "見つからない", rate_limited: "GitHub の回数制限で取れず", transient: "一時的に取得できず",
+    rejected: "取得が許可されていません", unusable: "使えない形（大きすぎる等）", skipped: "取得していません",
+  };
+  const ERROR_JA = {
+    JUDGE_REQUIRED: "この機能は審査員コードのある方だけ使えます。",
+    INVALID_INPUT: "リポジトリの指定が正しくありません。「持ち主/リポジトリ名」の形で入れてください。",
+    QUOTA: "混み合っています。少し待ってからもう一度お試しください。",
   };
   const SWITCHED_TEXT = "混み合っていて時間内に終わらなかったため、保存済みの結果を表示しています。";
   const VERDICT = {
@@ -159,6 +173,7 @@
     clear(box);
     state.presets = {};
     for (const p of presets) {
+      if (p.id === GITHUB_PRESET && !state.judge) continue; // 審査員コード専用（コードが無い時は、カードごと出さない）
       state.presets[p.id] = p;
       const t = PRESET_TEXT[p.id] || { num: "", desc: "" };
       const tag = p.replay ? "保存済みの実行あり" : "保存済みの実行なし（ライブのみ）";
@@ -175,7 +190,8 @@
   function select(id) {
     state.selected = id;
     for (const c of document.querySelectorAll(".card")) c.setAttribute("aria-checked", c.getAttribute("data-id") === id ? "true" : "false");
-    $("run").disabled = state.running;
+    $("repo-input").hidden = id !== GITHUB_PRESET;
+    syncRun();
     showDetail(id);
   }
 
@@ -209,6 +225,12 @@
   // ---- 実行（SSE を fetch の本文から読む）----
   async function run() {
     if (!state.selected || state.running) return;
+    const body = { preset_id: state.selected };
+    if (state.selected === GITHUB_PRESET) {
+      const url = repoUrl();
+      if (!url) { $("run-note").textContent = "「持ち主/リポジトリ名」の形で入れてください。"; return; }
+      body.repo_url = url;
+    }
     state.running = true;
     $("run").disabled = true;
     $("run-note").textContent = "実行しています…";
@@ -216,9 +238,10 @@
     const headers = { "Content-Type": "application/json", "Accept": "text/event-stream" };
     if (state.judge) headers["X-Judge"] = state.judge;
     try {
-      const res = await fetch("/api/run", { method: "POST", headers, body: JSON.stringify({ preset_id: state.selected }) });
+      const res = await fetch("/api/run", { method: "POST", headers, body: JSON.stringify(body) });
       if (!res.ok || !res.body) {
-        $("run-note").textContent = res.status === 429 ? "混み合っています。少し待ってからもう一度お試しください。" : "実行を受け付けられませんでした（" + res.status + "）。";
+        const code = await errorCode(res);
+        $("run-note").textContent = ERROR_JA[code] ? ERROR_JA[code] : res.status === 429 ? "混み合っています。少し待ってからもう一度お試しください。" : "実行を受け付けられませんでした（" + res.status + "）。";
         return;
       }
       await readStream(res.body);
@@ -227,8 +250,23 @@
       $("run-note").textContent = "通信が途切れました。";
     } finally {
       state.running = false;
-      $("run").disabled = !state.selected;
+      syncRun();
     }
+  }
+
+  async function errorCode(res) {
+    try { const j = await res.json(); return j && typeof j.code === "string" ? j.code : ""; } catch (e) { return ""; }
+  }
+
+  // 入力欄の値 → POST 用の URL。「持ち主/リポジトリ名」だけでも、URL をそのまま貼っても受ける（形が合わなければ null＝送らない。最終の検査はサーバー）
+  function repoUrl() {
+    let v = ($("repo-url").value || "").trim();
+    v = v.replace(new RegExp("^(?:https?:)?(?:\\/\\/)?(?:www\\.)?github\\.com\\/", "i"), "").replace(/\/$/, "");
+    return REPO_PATH.test(v) ? GITHUB_PREFIX + v : null;
+  }
+
+  function syncRun() {
+    $("run").disabled = state.running || !state.selected || (state.selected === GITHUB_PRESET && !repoUrl());
   }
 
   async function readStream(body) {
@@ -269,12 +307,15 @@
     $("result").hidden = false;
     for (const id of ["summary", "contradictions", "trace", "budget", "source-body", "reqs", "facts", "trust-flow", "replan-steps"]) clear($(id));
     $("list-status").textContent = "";
-    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "list-section", "planted-band", "reqlist-band", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
+    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "list-section", "planted-band", "reqlist-band", "repo-section", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
     clear($("planted-result"));
     clear($("reqlist"));
+    clear($("repo-items"));
+    clear($("repo-fetched"));
     $("reqlist-copy-status").textContent = "";
     $("run-mode").textContent = "";
     $("run-mode").className = "run-mode";
+    $("run-box").hidden = false; // リポジトリの点検の結果では隠す（実行の記録が無い）。次の実行では戻す
     state.events = [];
     state.traceCount = 0;
     state.view = null;
@@ -292,7 +333,9 @@
       $("run-mode").textContent = SWITCHED_TEXT;
       return;
     }
-    if (m.mode === "LIVE") {
+    if (m.mode === "LIVE" && state.selected === GITHUB_PRESET) {
+      note.textContent = "リポジトリを点検しています（決まった3項目。AIは使いません）。";
+    } else if (m.mode === "LIVE") {
       note.textContent = "ライブ実行中です。要項を読み、提出物を検査しています。";
       $("run-box").open = true; // 結果が出るまでは、実行の記録が増えていくのを見せる
       $("trace-box").open = true;
@@ -377,6 +420,7 @@
   function countOf(rows, tone) { return rows.filter((x) => x.tone === tone).length; }
 
   function renderResult(rec) {
+    if (rec && rec.kind === "repo_audit") { renderRepoAudit(rec); return; }
     state.live = rec.mode !== "REPLAY";
     if (state.live) $("run-mode").textContent = "ライブ実行の結果です。"; // 「実行中です」のまま残さない（切り替えた時は、その文面のまま）
     const s = rec.summary || {};
@@ -405,7 +449,7 @@
     if (snap) renderBudget(snap, state.live);
   }
 
-  function renderHero(rec, rows) {
+  function renderHero(rec, rows, plain) {
     const hero = $("hero");
     const head = $("hero-head");
     const sub = $("hero-sub");
@@ -431,7 +475,7 @@
     for (const [cls, n, label, tone] of [["s-fail", fail, "直す点", "fail"], ["s-human", human, "ご自身で確認", "human"], ["s-pass", pass, "通過", "pass"]]) {
       const inner = [el("span", { cls: "num", text: fmt(n) }), el("span", { cls: "lbl", text: label })];
       const li = el("li", { cls: "stat " + cls + (n === 0 ? " zero" : "") });
-      if (n > 0) {
+      if (n > 0 && !plain) {
         const b = el("button", { cls: "stat-btn", attrs: { type: "button", title: label + "の一覧を開く" } }, inner);
         b.addEventListener("click", () => openGroup(tone, true));
         li.appendChild(b);
@@ -441,6 +485,47 @@
       stats.appendChild(li);
     }
     hero.hidden = false;
+  }
+
+  // ---- リポジトリの基本点検（固定3項目。要項の要件・引用・一覧とは別の結果。画面に出すのは固定文・ラベル・件数だけ）----
+  function repoTone(label) { return label === "不適合" ? "fail" : label === "確認不能" ? "human" : "pass"; }
+
+  function renderRepoAudit(rec) {
+    state.live = true;
+    const items = Array.isArray(rec.items) ? rec.items : [];
+    const rows = items.map((it) => ({ tone: repoTone(it.label) }));
+    renderHero(rec, rows, true);
+    const human = countOf(rows, "human");
+    $("hero-sub").textContent = "リポジトリの基本点検（決まった3項目）です。AIは使っていません。" + (human > 0 ? " ご自身で確認する項目が " + fmt(human) + " 件あります。" : "");
+    $("hero-sub").hidden = false;
+    $("run-mode").textContent = "点検の結果です。リポジトリの中身は、結果に載せていません。";
+    const ol = $("repo-items");
+    clear(ol);
+    for (const it of items) {
+      const badge = VERDICT[it.label] || VERDICT["参考"];
+      const kids = [
+        el("div", { cls: "ri-head" }, [verdictNode({ cls: badge[0], mark: badge[1], label: it.label }), el("span", { cls: "ri-title", text: it.title_ja })]),
+        el("p", { cls: "ri-reason", text: it.reason_ja }),
+      ];
+      const ev = Array.isArray(it.evidence) ? it.evidence : [];
+      if (ev.length) {
+        const chips = el("div", { cls: "evidence" });
+        for (const e of ev) chips.appendChild(el("span", { cls: "chip plain", text: e.label }));
+        kids.push(chips);
+      }
+      ol.appendChild(el("li", { cls: "ri c-" + repoTone(it.label) }, kids));
+    }
+    const ul = $("repo-fetched");
+    clear(ul);
+    for (const f of Array.isArray(rec.fetched) ? rec.fetched : []) ul.appendChild(el("li", { text: f.name + ": " + (FETCH_STATUS_JA[f.status] || f.status) }));
+    for (const w of Array.isArray(rec.warnings) ? rec.warnings : []) {
+      if (w.code !== "INJECTION_SUSPECTED") continue;
+      const band = $("warning");
+      band.textContent = "プロンプトインジェクションの疑いを " + fmt(w.count) + " 件見つけました。AIには渡していません。判定にも使っていません。";
+      band.hidden = false;
+    }
+    $("repo-section").hidden = false;
+    $("run-box").hidden = true; // 実行の記録（トレース）は無い
   }
 
   function renderWarning(s) {
@@ -836,6 +921,7 @@
     $("run").addEventListener("click", run);
     $("source-close").addEventListener("click", () => { $("source").hidden = true; });
     $("reqlist-copy").addEventListener("click", copyReqList);
+    $("repo-url").addEventListener("input", syncRun);
     loadStatus();
   });
 })();

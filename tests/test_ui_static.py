@@ -88,9 +88,19 @@ def test_no_inline_script_style_or_event_handler_in_the_page():
     assert links == [{"rel": "stylesheet", "href": "/app.css"}]
 
 
-def test_there_is_no_input_field_only_preset_cards_and_one_run_button():
+def test_the_only_input_field_is_the_github_repo_one_and_the_rest_is_preset_cards_and_one_run_button():
+    """入力欄は、審査員コード用の GitHub のリポジトリ欄（`repo-url`）の1つだけ。最初は隠れていて、そのカードを選んだ時だけ出る。
+    textarea・select・form は無い。値の使い道は `repoUrl()` だけ（保存・URL・表示に出さない）で、POST の本文にだけ入れる。"""
     p = _parsed()
-    assert not any(t in ("input", "textarea", "select", "form") for t, _ in p.tags)
+    inputs = [a for t, a in p.tags if t == "input"]
+    assert len(inputs) == 1 and inputs[0]["id"] == "repo-url" and inputs[0]["type"] == "text"
+    assert not any(t in ("textarea", "select", "form") for t, _ in p.tags)
+    assert re.search(r'<div id="repo-input"[^>]*\bhidden\b', HTML)
+    assert JS.count('$("repo-url").value') == 1 and "body.repo_url = url" in JS
+    for bad in ("localStorage", "sessionStorage", "document.cookie", "sendBeacon", "history.pushState"):
+        assert bad not in JS, bad
+    cards = JS.split("function renderPresets")[1].split("function select")[0]
+    assert "p.id === GITHUB_PRESET && !state.judge" in cards  # 審査員コードが無い時は、GitHub のカードを出さない
     assert ("button", {"id": "run", "type": "button", "class": "primary", "disabled": None}) in p.tags
     assert ">監査を実行<" in HTML
 
@@ -317,6 +327,21 @@ def test_the_requirement_list_is_a_closed_band_built_from_the_record_and_copying
     assert "band.open = false" in block  # 最初は閉じる
     assert "navigator.clipboard" in JS and "コピーできませんでした" in JS  # 失敗した時は、できなかったと言う
     assert '"reqlist-band"' in JS.split("function resetResult")[1].split("function onMode")[0]  # 新しい実行では帯を隠す
+
+
+def test_the_github_result_is_drawn_from_fixed_sentences_labels_and_counts_only_and_the_run_box_comes_back():
+    """GitHub の基本点検の結果（kind=repo_audit）は、固定文・ラベル・件数・取得の状態だけを描く。要項の要件・引用・一覧の部品は使わない。
+    押せない数（クリックで一覧を開く先が無い）。実行の記録が無いので隠し、次の実行で戻す。エラーの固定文は、コードから引く。"""
+    assert 'rec.kind === "repo_audit"' in JS.split("function renderResult")[1].split("function renderHero")[0]
+    block = JS.split("function renderRepoAudit")[1].split("function renderWarning")[0]
+    assert "it.title_ja" in block and "it.reason_ja" in block and "renderHero(rec, rows, true)" in block
+    for gone in ("original_span", "quote", "rec.requirements", "rec.verdicts", "readme", "README の中身"):
+        assert gone not in block, gone
+    assert "AIは使っていません" in block and "AIには渡していません" in block
+    assert '$("run-box").hidden = true' in block and '$("run-box").hidden = false' in JS.split("function resetResult")[1].split("function onMode")[0]
+    for code in ("JUDGE_REQUIRED", "INVALID_INPUT", "QUOTA"):
+        assert code + ":" in JS.split("const ERROR_JA")[1].split("};")[0], code
+    assert "async function errorCode" in JS and "ERROR_JA[code]" in JS
 
 
 def test_a_saved_run_does_not_draw_the_time_gauge_because_its_cap_may_differ_from_todays():

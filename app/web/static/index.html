@@ -30,6 +30,11 @@
         <ol id="planted-list" class="planted"></ol>
       </details>
     </div>
+    <div id="repo-input" class="repo-input" hidden>
+      <label for="repo-url" class="repo-label">GitHub の公開リポジトリ</label>
+      <input id="repo-url" class="repo-field" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200" placeholder="持ち主/リポジトリ名">
+      <p class="sub">github.com/ のあとの「持ち主/リポジトリ名」を入れます。URL をそのまま貼ってもかまいません。</p>
+    </div>
     <div class="actions">
       <button id="run" type="button" class="primary" disabled>監査を実行</button>
       <p id="run-note" class="note" aria-live="polite"></p>
@@ -47,6 +52,12 @@
       <h3 id="hero-head" class="headline"></h3>
       <p id="hero-sub" class="hero-sub" hidden></p>
       <ul id="summary" class="stats"></ul>
+    </section>
+
+    <section id="repo-section" class="list" aria-labelledby="h-repo" hidden>
+      <h3 id="h-repo" class="list-title">基本点検の3項目</h3>
+      <ol id="repo-items" class="repo-items"></ol>
+      <ul id="repo-fetched" class="repo-fetched"></ul>
     </section>
 
     <div id="contradictions" class="contra" hidden></div>
