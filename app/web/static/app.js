@@ -30,7 +30,8 @@
     spec_url: ["要項のページの URL（3つまで）", "要項のページの URL", "公開されているページの URL を、空白で区切って3つまで入れます。1ページずつ読み、リンク先は読みません。"],
   };
   // 要項のページ: 公開のホスト名の https だけ（IP の直書き・ポート・空白は送らない。最終の検査はサーバー）
-  const SPEC_URL = new RegExp("^https:\\/\\/[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}(?:[\\/?#][^\\s]*)?$");
+  const SPEC_URL = new RegExp("^https:\\/\\/[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}(?:[\\/?][^\\s#]*)?$");
+  const SPEC_HOST_NG = /(?:^[0-9.]+$|\.(?:local|internal|localhost|localdomain|home\.arpa)$)/i; // 数字だけのホスト・内部向けの名前（サーバーも拒否する）
   // 画面の文字列には外部 URL を書かない（tests の検査）。入力欄に打たれた「持ち主/リポジトリ名」から、実行時に組み立てて POST の本文にだけ使う
   const GITHUB_PREFIX = "https:" + "//github.com/";
   const REPO_PATH = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
@@ -204,6 +205,7 @@
       state.urlFor = id;
       $("repo-label").textContent = u[0];
       $("repo-url").setAttribute("placeholder", u[1]);
+      $("repo-url").setAttribute("maxlength", id === SPEC_PRESET ? "6200" : "200"); // 要項は URL を3つまで（1つ 2048 字まで）
       $("repo-hint").textContent = u[2];
     }
     $("repo-input").hidden = !u;
@@ -261,7 +263,9 @@
       const res = await fetch("/api/run", { method: "POST", headers, body: JSON.stringify(body) });
       if (!res.ok || !res.body) {
         const code = await errorCode(res);
-        $("run-note").textContent = ERROR_JA[code] ? ERROR_JA[code] : res.status === 429 ? "混み合っています。少し待ってからもう一度お試しください。" : "実行を受け付けられませんでした（" + res.status + "）。";
+        $("run-note").textContent = code === "INVALID_INPUT" && state.selected === SPEC_PRESET
+          ? "要項のページの URL を受け付けられませんでした。https で始まる公開ページの URL を、空白で区切って3つまで入れてください。"
+          : ERROR_JA[code] ? ERROR_JA[code] : res.status === 429 ? "混み合っています。少し待ってからもう一度お試しください。" : "実行を受け付けられませんでした（" + res.status + "）。";
         return;
       }
       await readStream(res.body);
@@ -286,7 +290,8 @@
     const max = Number((state.presets[SPEC_PRESET] || {}).max_urls) || 1;
     const list = urlInput().split(/\s+/).filter(Boolean);
     if (!list.length || list.length > max || new Set(list).size !== list.length) return null;
-    return list.every((v) => v.length <= 2048 && SPEC_URL.test(v)) ? list : null;
+    const hostOf = (v) => v.slice(8).split(/[\/?]/, 1)[0].replace(/\.$/, "");
+    return list.every((v) => v.length <= 2048 && SPEC_URL.test(v) && !SPEC_HOST_NG.test(hostOf(v))) ? list : null;
   }
 
   function repoUrl() {
