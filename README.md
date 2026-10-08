@@ -37,11 +37,12 @@
 
 ## パッケージ化した部分（依存 OSS）
 
-本番イメージに入るのは `requirements.txt` の9個、テスト専用が `requirements-dev.txt` の5個です。すべて版を固定しています。
-ライセンス名は、固定した版をインストールしたときのパッケージのメタデータに書かれていた表記です（自分で推測したものではありません）。
-全文は各パッケージの配布物で確認してください。推移的な依存のライセンスはここでは一覧していません（**要確認**）。
+アプリが直接使う OSS は次の9つで、本番イメージに入ります。`requirements.txt` は、これらが引く推移的な依存まで、すべて版を固定しています
+（固定しないと、再ビルドのたびに版が動くため）。**本番イメージに入る全パッケージのライセンスは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に一覧しています**
+（`python -m tools.third_party_notices --write` が、インストール済みパッケージのメタデータから作ります。`--check` で、固定版と一覧が一致していることを確かめます）。
+ライセンス名は、メタデータに書かれていた表記のままで、自分で推測したものではありません。全文は各パッケージの配布物で確認してください。
 
-本番（`requirements.txt`）:
+アプリが直接使うもの:
 
 | パッケージ | 版 | ライセンス（メタデータの表記） |
 |---|---|---|
@@ -55,15 +56,8 @@
 | anyio | 4.15.1 | MIT |
 | certifi | 2026.7.22 | MPL-2.0 |
 
-テスト専用（`requirements-dev.txt`。本番イメージには入れません）:
-
-| パッケージ | 版 | ライセンス（メタデータの表記） |
-|---|---|---|
-| pytest | 9.1.1 | MIT |
-| pytest-asyncio | 1.4.0 | Apache-2.0 |
-| cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause |
-| idna | 3.20 | BSD-3-Clause |
-| httpx | 0.28.1 | BSD-3-Clause |
+テスト専用（`requirements-dev.txt`。本番イメージには入れません）: pytest 9.1.1（MIT）・pytest-asyncio 1.4.0（Apache-2.0）。
+テストが直接使う cryptography・idna・httpx は、本番イメージにも推移的に入るので、`requirements.txt` で固定し、一覧は THIRD_PARTY_NOTICES.md にあります。
 
 モデルは Google Cloud の Vertex AI 上の Gemini を、サービスアカウントの権限（ADC）で呼びます。API キーは使いません。
 

@@ -28,7 +28,9 @@ PROD_IMPORTS = {
 # google 名前空間は配布が分かれる。下位モジュール → 配布名（google だけでは足りない＝宣言漏れを見逃さない）
 GOOGLE_SUBMODULE_DISTS = {"google.genai": "google-genai", "google.cloud.firestore": "google-cloud-firestore"}
 TEST_ONLY_IMPORTS = {"pytest": "pytest", "cryptography": "cryptography", "idna": "idna"}
-TEST_ONLY_DISTS = {"pytest", "pytest-asyncio", "cryptography", "idna", "httpx"}  # 本番に宣言してはいけないもの
+# 本番に宣言してはいけないもの（本当にテスト専用のもの）。cryptography・idna・httpx はテストも直接使うが、本番イメージにも推移的に入るので
+# requirements.txt に固定してある（推移的な依存まで固定する方針。THIRD_PARTY_NOTICES.md の一覧と一致させる）。
+TEST_ONLY_DISTS = {"pytest", "pytest-asyncio"}
 
 
 def _req_lines(name: str) -> list[str]:
