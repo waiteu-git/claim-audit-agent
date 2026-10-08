@@ -27,7 +27,7 @@
   const SPEC_PRESET = "spec_url"; // 要項モード（要項のページ1つ → 要件の一覧だけ。判定なし）
   const URL_PRESETS = {
     github_repo: ["GitHub の公開リポジトリ", "持ち主/リポジトリ名", "github.com/ のあとの「持ち主/リポジトリ名」を入れます。URL をそのまま貼ってもかまいません。"],
-    spec_url: ["要項のページの URL", "要項のページの URL", "公開されているページを1つだけ読みます（リンク先は読みません）。"],
+    spec_url: ["要項のページの URL（3つまで）", "要項のページの URL", "公開されているページの URL を、空白で区切って3つまで入れます。1ページずつ読み、リンク先は読みません。"],
   };
   // 要項のページ: 公開のホスト名の https だけ（IP の直書き・ポート・空白は送らない。最終の検査はサーバー）
   const SPEC_URL = new RegExp("^https:\\/\\/[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}(?:[\\/?#][^\\s]*)?$");
@@ -247,9 +247,9 @@
       if (!url) { $("run-note").textContent = "「持ち主/リポジトリ名」の形で入れてください。"; return; }
       body.repo_url = url;
     } else if (state.selected === SPEC_PRESET) {
-      const url = specUrl();
-      if (!url) { $("run-note").textContent = "公開されているページの URL（https で始まるもの）を入れてください。"; return; }
-      body.spec_url = url;
+      const urls = specUrls();
+      if (!urls) { $("run-note").textContent = "公開されているページの URL（https で始まるもの）を、空白で区切って3つまで入れてください。"; return; }
+      body.spec_urls = urls;
     }
     state.running = true;
     $("run").disabled = true;
@@ -281,9 +281,12 @@
   // 入力欄の値 → POST 用の URL。「持ち主/リポジトリ名」だけでも、URL をそのまま貼っても受ける（形が合わなければ null＝送らない。最終の検査はサーバー）
   function urlInput() { return ($("repo-url").value || "").trim(); }
 
-  function specUrl() {
-    const v = urlInput();
-    return v.length <= 2048 && SPEC_URL.test(v) ? v : null;
+  // 要項のページ（1〜max_urls 件・空白区切り・重複なし）。形が合わない間は null＝送らない
+  function specUrls() {
+    const max = Number((state.presets[SPEC_PRESET] || {}).max_urls) || 1;
+    const list = urlInput().split(/\s+/).filter(Boolean);
+    if (!list.length || list.length > max || new Set(list).size !== list.length) return null;
+    return list.every((v) => v.length <= 2048 && SPEC_URL.test(v)) ? list : null;
   }
 
   function repoUrl() {
@@ -293,7 +296,7 @@
   }
 
   function syncRun() {
-    $("run").disabled = state.running || !state.selected || (state.selected === GITHUB_PRESET && !repoUrl()) || (state.selected === SPEC_PRESET && !specUrl());
+    $("run").disabled = state.running || !state.selected || (state.selected === GITHUB_PRESET && !repoUrl()) || (state.selected === SPEC_PRESET && !specUrls());
   }
 
   async function readStream(body) {
@@ -565,7 +568,9 @@
     const rows = rowsOf(rec);
     state.view = { rec, rows, open: {} };
     $("hero-head").textContent = rows.length ? "要件を " + fmt(rows.length) + " 件取り出しました。" : "要件を取り出せませんでした。";
-    $("hero-sub").textContent = "このページだけを読みました。提出物の検査と判定はしていません。";
+    const skipped = Array.isArray(rec.skipped_pages) ? rec.skipped_pages : [];
+    $("hero-sub").textContent = "入れたページだけを読みました（リンク先は読んでいません）。提出物の検査と判定はしていません。" +
+      skipped.map((s) => " " + fmt(s.page) + "番目のページ: " + s.reason).join("");
     $("hero-sub").hidden = false;
     clear($("summary"));
     $("summary").hidden = true; // 判定の数は無い（次の実行で戻す）

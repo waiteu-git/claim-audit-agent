@@ -355,7 +355,8 @@ def test_the_spec_only_mode_shows_just_the_requirement_list_opened_with_copy_and
         assert gone not in block, gone
     rl = JS.split("function renderReqList")[1].split("function mdCell")[0]
     assert "p.fictional === true || specOnly" in rl and "band.open = specOnly" in rl
-    assert "body.spec_url = url" in JS and 'state.selected === SPEC_PRESET && !specUrl()' in JS
+    assert "body.spec_urls = urls" in JS and 'state.selected === SPEC_PRESET && !specUrls()' in JS
+    assert "rec.skipped_pages" in block and "max_urls" in JS  # 読めなかったページは何番目かと理由の固定文だけ。件数の上限はサーバーの値
     assert 'if (state.urlFor !== id) $("repo-url").value = ""' in JS
 
 
