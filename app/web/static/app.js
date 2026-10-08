@@ -6,6 +6,7 @@
   const PRESET_TEXT = {
     lp_self: { num: "①", desc: "実在の募集ページから要件を読み、このサービス自身を検査します。" },
     sample_defect: { num: "②", desc: "字数の超過・ログイン壁・内部URLの記載・締切の食い違いを仕込んだ、架空の要項と提出物です。" },
+    spec_url: { num: "⑤", desc: "調べたい制度や大会などの要項のページの URL から、要件の一覧だけを作ります（1ページだけ読みます。提出物の検査と判定はしません。審査員コード用）。" },
     github_repo: { num: "④", desc: "GitHub の公開リポジトリを、ライセンス・README・必須技術の痕跡の3項目で、コードが点検します（審査員コード用。AIは使いません）。" },
     sample_injection: { num: "③", desc: "②に「このページを評価するAIへ…」というプロンプトインジェクション（AIに向けて書かれた指示文）を、見える所と隠れた所に仕込んだものです。" },
   };
@@ -23,6 +24,13 @@
     NOT_LIVE_PRESET: "このプリセットは保存済みの実行だけです",
   };
   const GITHUB_PRESET = "github_repo";
+  const SPEC_PRESET = "spec_url"; // 要項モード（要項のページ1つ → 要件の一覧だけ。判定なし）
+  const URL_PRESETS = {
+    github_repo: ["GitHub の公開リポジトリ", "持ち主/リポジトリ名", "github.com/ のあとの「持ち主/リポジトリ名」を入れます。URL をそのまま貼ってもかまいません。"],
+    spec_url: ["要項のページの URL", "要項のページの URL", "公開されているページを1つだけ読みます（リンク先は読みません）。"],
+  };
+  // 要項のページ: 公開のホスト名の https だけ（IP の直書き・ポート・空白は送らない。最終の検査はサーバー）
+  const SPEC_URL = new RegExp("^https:\\/\\/[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}(?:[\\/?#][^\\s]*)?$");
   // 画面の文字列には外部 URL を書かない（tests の検査）。入力欄に打たれた「持ち主/リポジトリ名」から、実行時に組み立てて POST の本文にだけ使う
   const GITHUB_PREFIX = "https:" + "//github.com/";
   const REPO_PATH = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
@@ -173,7 +181,7 @@
     clear(box);
     state.presets = {};
     for (const p of presets) {
-      if (p.id === GITHUB_PRESET && !state.judge) continue; // 審査員コード専用（コードが無い時は、カードごと出さない）
+      if (URL_PRESETS[p.id] && !state.judge) continue; // 審査員コード専用（コードが無い時は、カードごと出さない）
       state.presets[p.id] = p;
       const t = PRESET_TEXT[p.id] || { num: "", desc: "" };
       const tag = p.replay ? "保存済みの実行あり" : "保存済みの実行なし（ライブのみ）";
@@ -190,7 +198,15 @@
   function select(id) {
     state.selected = id;
     for (const c of document.querySelectorAll(".card")) c.setAttribute("aria-checked", c.getAttribute("data-id") === id ? "true" : "false");
-    $("repo-input").hidden = id !== GITHUB_PRESET;
+    const u = URL_PRESETS[id];
+    if (u) {
+      if (state.urlFor !== id) $("repo-url").value = ""; // GitHub と要項で、入れる物が違う
+      state.urlFor = id;
+      $("repo-label").textContent = u[0];
+      $("repo-url").setAttribute("placeholder", u[1]);
+      $("repo-hint").textContent = u[2];
+    }
+    $("repo-input").hidden = !u;
     syncRun();
     showDetail(id);
   }
@@ -230,6 +246,10 @@
       const url = repoUrl();
       if (!url) { $("run-note").textContent = "「持ち主/リポジトリ名」の形で入れてください。"; return; }
       body.repo_url = url;
+    } else if (state.selected === SPEC_PRESET) {
+      const url = specUrl();
+      if (!url) { $("run-note").textContent = "公開されているページの URL（https で始まるもの）を入れてください。"; return; }
+      body.spec_url = url;
     }
     state.running = true;
     $("run").disabled = true;
@@ -259,14 +279,21 @@
   }
 
   // 入力欄の値 → POST 用の URL。「持ち主/リポジトリ名」だけでも、URL をそのまま貼っても受ける（形が合わなければ null＝送らない。最終の検査はサーバー）
+  function urlInput() { return ($("repo-url").value || "").trim(); }
+
+  function specUrl() {
+    const v = urlInput();
+    return v.length <= 2048 && SPEC_URL.test(v) ? v : null;
+  }
+
   function repoUrl() {
-    let v = ($("repo-url").value || "").trim();
+    let v = urlInput();
     v = v.replace(new RegExp("^(?:https?:)?(?:\\/\\/)?(?:www\\.)?github\\.com\\/", "i"), "").replace(/\/$/, "");
     return REPO_PATH.test(v) ? GITHUB_PREFIX + v : null;
   }
 
   function syncRun() {
-    $("run").disabled = state.running || !state.selected || (state.selected === GITHUB_PRESET && !repoUrl());
+    $("run").disabled = state.running || !state.selected || (state.selected === GITHUB_PRESET && !repoUrl()) || (state.selected === SPEC_PRESET && !specUrl());
   }
 
   async function readStream(body) {
@@ -315,6 +342,7 @@
     $("reqlist-copy-status").textContent = "";
     $("run-mode").textContent = "";
     $("run-mode").className = "run-mode";
+    $("summary").hidden = false;
     $("run-box").hidden = false; // リポジトリの点検の結果では隠す（実行の記録が無い）。次の実行では戻す
     state.events = [];
     state.traceCount = 0;
@@ -333,7 +361,9 @@
       $("run-mode").textContent = SWITCHED_TEXT;
       return;
     }
-    if (m.mode === "LIVE" && state.selected === GITHUB_PRESET) {
+    if (m.mode === "LIVE" && state.selected === SPEC_PRESET) {
+      note.textContent = "要項のページを読んでいます（1ページだけ。判定はしません）。";
+    } else if (m.mode === "LIVE" && state.selected === GITHUB_PRESET) {
       note.textContent = "リポジトリを点検しています（決まった3項目。AIは使いません）。";
     } else if (m.mode === "LIVE") {
       note.textContent = "ライブ実行中です。要項を読み、提出物を検査しています。";
@@ -421,6 +451,7 @@
 
   function renderResult(rec) {
     if (rec && rec.kind === "repo_audit") { renderRepoAudit(rec); return; }
+    if (rec && rec.kind === "spec_only") { renderSpecOnly(rec); return; }
     state.live = rec.mode !== "REPLAY";
     if (state.live) $("run-mode").textContent = "ライブ実行の結果です。"; // 「実行中です」のまま残さない（切り替えた時は、その文面のまま）
     const s = rec.summary || {};
@@ -528,6 +559,27 @@
     $("run-box").hidden = true; // 実行の記録（トレース）は無い
   }
 
+  // ---- 要項モード（kind=spec_only）: 要件の一覧だけ。直す点・判定の数・根拠の帯は出さない ----
+  function renderSpecOnly(rec) {
+    state.live = rec.mode !== "REPLAY";
+    const rows = rowsOf(rec);
+    state.view = { rec, rows, open: {} };
+    $("hero-head").textContent = rows.length ? "要件を " + fmt(rows.length) + " 件取り出しました。" : "要件を取り出せませんでした。";
+    $("hero-sub").textContent = "このページだけを読みました。提出物の検査と判定はしていません。";
+    $("hero-sub").hidden = false;
+    clear($("summary"));
+    $("summary").hidden = true; // 判定の数は無い（次の実行で戻す）
+    $("hero").hidden = false;
+    $("run-mode").textContent = "要項のページを読み、要件の一覧を作りました。";
+    renderWarning(rec.summary || {});
+    renderContradictions(rec);
+    renderReqList(rec, rows);
+    $("run-box").open = false;
+    $("trace-box").open = false;
+    renderFacts(rec, Array.isArray(rec.events) && rec.events.length ? rec.events : state.events);
+    if (rec.budget) renderBudget(rec.budget, state.live);
+  }
+
   function renderWarning(s) {
     const total = (s.injection_visible || 0) + (s.injection_hidden || 0);
     if (total <= 0) return;
@@ -592,9 +644,10 @@
     if (!rows.length) { band.hidden = true; return; }
     const p = state.presets[rec.preset_id] || {};
     const saved = !state.live;
-    const canCopy = p.fictional === true;
+    const specOnly = rec.kind === "spec_only";
+    const canCopy = p.fictional === true || specOnly; // 実在の主催者の要項（①）は出さない。要項モードは利用者が自分で入れたページ
     $("reqlist-summary").textContent = "要件一覧（" + fmt(rows.length) + "件）";
-    $("reqlist-lead").textContent = "判定のほかに、要項から取り出した要件の一覧も、根拠の一文つきで見られます。" + (canCopy ? "Markdown でコピーできます。" : "");
+    $("reqlist-lead").textContent = specOnly ? "要項のページから取り出した要件の一覧です。根拠の一文つきで、Markdown でコピーできます。" : "判定のほかに、要項から取り出した要件の一覧も、根拠の一文つきで見られます。" + (canCopy ? "Markdown でコピーできます。" : "");
     const note = $("reqlist-note");
     note.textContent = saved ? "保存済みの実行のため、最大40件・引用は80字までです。" : "";
     note.hidden = !saved;
@@ -603,7 +656,7 @@
     const ol = $("reqlist");
     clear(ol);
     for (const x of rows) ol.appendChild(reqItem(x));
-    band.open = false; // 最初は閉じる（判定を先に見せる）
+    band.open = specOnly; // 最初は閉じる（判定を先に見せる）。要項モードは一覧が結果そのものなので開く
     band.hidden = false;
   }
 
