@@ -231,17 +231,17 @@ def test_speculative_requirements_are_always_reference_and_never_counted(with_ob
 
 
 def test_the_reference_reason_does_not_claim_the_quote_is_missing_when_the_quote_matched():
-    """引用が原文と一致しているのに、コードが推測へ降格した要件に、「原文に引用できない」と書かない（10/8 の実LP・別分野の文書で見つかった表示の誤り）。"""
+    """引用が要項と一致しているのに、コードが推測へ降格した要件に、「要項に引用できない」と書かない（10/8 の実LP・別分野の文書で見つかった表示の誤り）。"""
     sp = make_verified("R9", doc=SPEC, needle=SENTENCES["len"], kind=C.Kind.SPECULATIVE, declared_kind=C.Kind.REQUIRED,
                        check_class=CC.NONE, demotion=C.DemotionReason.NO_OBLIGATION_WORD)  # fmt: skip
     v = one(sp)
     assert v.label is L.REFERENCE
-    assert "一致" in v.reason and "義務の語が無い" in v.reason and "原文に引用できない" not in v.reason
+    assert "一致" in v.reason and "義務の語が無い" in v.reason and "要項に引用できない" not in v.reason
     for reason, word in ((C.DemotionReason.NEGATION_OR_EXCEPTION, "否定・例外"), (C.DemotionReason.SENTENCE_TOO_LONG, "文が長く")):
         chips = (C.Chip.NEGATION_OR_EXCEPTION,) if reason is C.DemotionReason.NEGATION_OR_EXCEPTION else ()
         r = make_verified("R9", doc=SPEC, needle=SENTENCES["len"], kind=C.Kind.SPECULATIVE, declared_kind=C.Kind.REQUIRED,
                           check_class=CC.NONE, demotion=reason, chips=chips)  # fmt: skip
-        assert word in one(r).reason and "原文に引用できない" not in one(r).reason
+        assert word in one(r).reason and "要項に引用できない" not in one(r).reason
     declared = make_verified("R9", doc=SPEC, needle=SENTENCES["len"], kind=C.Kind.SPECULATIVE, declared_kind=C.Kind.SPECULATIVE, check_class=CC.NONE)
     assert "推測と申告" in one(declared).reason
 
@@ -349,7 +349,7 @@ def terms_obs(code: C.ObsCode, outcome: C.ObsOutcome, doc_id: str | None = "D3",
 def test_terms_found_is_a_presumed_pass_with_the_self_declared_caveat():
     v = one(R("R3", "guide", CC.GUIDANCE_PRESENT), [terms_obs(C.ObsCode.TERMS_FOUND, C.ObsOutcome.PASS)])
     assert v.label is L.PRESUMED_PASS and "保証ではありません" in v.reason
-    assert v.evidence[0].label == "求められた語が本文にある（自己申告）"
+    assert v.evidence[0].label == "求められた語が提出物のページにある（自己申告）"
 
 
 def test_terms_found_is_presumed_pass_even_on_a_truncated_document():
@@ -365,7 +365,7 @@ def test_terms_found_on_a_login_page_is_not_presumed_pass():
 @pytest.mark.parametrize("outcome", [C.ObsOutcome.INCONCLUSIVE, C.ObsOutcome.FAIL])  # チェッカーがどちらで返しても判定表が決める
 def test_required_terms_absent_on_a_complete_content_doc_is_a_fail(outcome):
     v = one(R("R3", "guide", CC.GUIDANCE_PRESENT), [terms_obs(C.ObsCode.TERMS_ABSENT, outcome)])
-    assert v.label is L.FAIL and v.evidence[0].label == "求められた語が本文に無い"
+    assert v.label is L.FAIL and v.evidence[0].label == "求められた語が提出物のページに無い"
 
 
 @pytest.mark.parametrize(
@@ -415,8 +415,17 @@ def test_code_set_mark_gives_the_reason_when_nothing_else_decides():
 
 @pytest.mark.parametrize("code", [U.HUMAN_ONLY, U.NOT_PUBLIC, U.FUTURE, U.OUT_OF_SCOPE, U.NO_EVIDENCE])
 def test_planner_marks_without_a_premise_requirement_are_accepted(code):
-    v = one(R("R6", "free", CC.NONE), marks=[mark(code, by_planner=True, req_id="R6")])
+    # 検査の種類がある要件（観測が不確定だった後の印）では、前提の要らない理由を従来どおり採る
+    v = one(R("R3", "guide", CC.GUIDANCE_PRESENT), marks=[mark(code, by_planner=True, req_id="R3")])
     assert v.reason_code is code
+
+
+@pytest.mark.parametrize("code", [U.HUMAN_ONLY, U.NOT_PUBLIC, U.FUTURE, U.OUT_OF_SCOPE])
+def test_planner_marks_with_model_chosen_codes_do_not_decide_a_none_class_requirement(code):
+    # 検査できないクラスの理由は、引用の文面から関門（checks/unverifiable_reason）が決める。Planner（モデル）が前提なしで選べる
+    # 4コードは採らない（モデルが理由コードと固定文を決められない）。tests/test_unverifiable_reason.py に文面ごとの確認がある
+    req = R("R6", "free", CC.NONE)
+    assert one(req, marks=[mark(code, by_planner=True, req_id="R6")]) == one(req)
 
 
 def probe_obs(obs_id: str = "O2", **spec) -> C.Observation:
@@ -518,7 +527,8 @@ def test_one_verdict_per_requirement_in_input_order():
     verdicts = run(reqs, observations, marks)
     assert [v.req_id for v in verdicts] == [r.req_id for r in reqs]
     assert [v.label for v in verdicts] == [L.FAIL, L.FAIL, L.UNVERIFIABLE, L.PASS, L.UNVERIFIABLE, L.UNVERIFIABLE, L.UNVERIFIABLE, L.REFERENCE]
-    assert [v.reason_code for v in verdicts] == [None, None, U.NO_EVIDENCE, None, U.NO_EVIDENCE, U.HUMAN_ONLY, U.BUDGET, None]
+    # R6（検査できないクラス）の Planner の印 HUMAN_ONLY は採らず、引用の文面から関門が決める（この文は何にも当たらず OUT_OF_SCOPE）
+    assert [v.reason_code for v in verdicts] == [None, None, U.NO_EVIDENCE, None, U.NO_EVIDENCE, U.OUT_OF_SCOPE, U.BUDGET, None]
 
 
 def test_adjudication_is_deterministic_and_independent_of_unrelated_observations_order():

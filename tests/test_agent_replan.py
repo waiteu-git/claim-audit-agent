@@ -66,7 +66,7 @@ async def test_when_the_linked_page_has_no_guide_either_the_absence_is_confirmed
     terms = [o for o in res.record.observations if o.req_id == "R3"]
     assert [(o.doc_id, o.code.value) for o in terms] == [("D2", "TERMS_ABSENT"), ("D3", "TERMS_ABSENT")]  # 説明ページと案内ページの両方で「無い」
     v = verdicts(res)
-    assert v["R3"].label is VerdictLabel.FAIL and v["R3"].reason == "要項が求める案内（語）が、提出物の本文に見つかりません。"
+    assert v["R3"].label is VerdictLabel.FAIL and v["R3"].reason == "要項が求める案内（語）が、提出物のページに見つかりません。"
     assert v["R2"].label is VerdictLabel.FAIL  # 提出URLはログインへ転送される＋案内も無い＝審査員が開けない
     assert {e.obs_id for e in v["R3"].evidence} == {terms[0].obs_id}  # 判定の証拠チップは観測を指す
 
