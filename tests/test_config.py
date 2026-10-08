@@ -20,7 +20,7 @@ def test_run_caps_match_the_design_table():
     assert (c.fetches_acquire, c.fetches_fetch_link, c.fetches_probe, c.fetches_total, c.third_party_origins) == (3, 3, 2, 8, 4)
     assert (c.requirements_obligatory, c.requirements_speculative, c.requirements_optional, c.requirements_request) == (64, 8, 8, 8)
     assert (c.quote_verify_max_chars, c.quote_display_max_chars) == (160, 80)
-    assert c.wall_clock_s == 75 and c.planner_max_turns == 8 and c.tool_calls_per_requirement == 3
+    assert c.wall_clock_s == 100 and c.planner_max_turns == 8 and c.tool_calls_per_requirement == 3
     assert (c.reader_total_chars, c.reader_chunk_chars, c.reader_chunk_overlap, c.reader_max_parallel) == (50_000, 6_000, 400, 3)
 
 

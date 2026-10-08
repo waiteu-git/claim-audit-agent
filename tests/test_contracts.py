@@ -690,7 +690,7 @@ def test_budget_blocks_calls_that_would_overrun_tokens_or_time():
     assert b.can_call_model(C.ModelPurpose.PLANNER, est_tokens_in=90_000, max_output_tokens=14_000)
     assert not b.can_call_model(C.ModelPurpose.PLANNER, est_tokens_in=90_001)
     assert not b.can_call_model(C.ModelPurpose.PLANNER, max_output_tokens=14_001)
-    b.elapsed_ms = 75_000
+    b.elapsed_ms = int(b.caps.wall_clock_s * 1000)
     assert not b.can_call_model(C.ModelPurpose.PLANNER)
     assert b.exhausted() is C.BudgetDimension.WALL_CLOCK
     assert b.snapshot().wall_ms_left == 0

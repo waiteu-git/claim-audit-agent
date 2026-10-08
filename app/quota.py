@@ -88,6 +88,7 @@ class ReplayReason(StrEnum):
     BUDGET = "BUDGET"  # 円の上限（日次・累計）
     STORE_UNAVAILABLE = "STORE_UNAVAILABLE"  # 保存先に届かない（fail-closed）
     NOT_LIVE_PRESET = "NOT_LIVE_PRESET"  # 保存済みの実行しか持たないプリセット
+    LIVE_TIMEOUT = "LIVE_TIMEOUT"  # ライブ実行が時間内に終わらず、実行の途中で保存済みの実行へ切り替えた（ADMIT の判断ではない。web が付ける）
 
 
 class AdmitRejected(Exception):

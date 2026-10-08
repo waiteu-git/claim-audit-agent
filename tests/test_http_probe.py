@@ -388,7 +388,7 @@ async def test_unknown_errors_and_cancellation_propagate():
         await http_probe(FakeFetchPort(AppError(ErrorCode.INTERNAL, "boom")), SUB_URL, obs_id="O1", sleep=SleepRecorder())
     with pytest.raises(ValueError):
         await http_probe(FakeFetchPort(ValueError("x")), SUB_URL, obs_id="O1", sleep=SleepRecorder())
-    with pytest.raises(asyncio.CancelledError):  # 切断・75秒超過の中止を呑み込まない
+    with pytest.raises(asyncio.CancelledError):  # 切断・壁時計超過の中止を呑み込まない
         await http_probe(FakeFetchPort(asyncio.CancelledError()), SUB_URL, obs_id="O1", sleep=SleepRecorder())
 
 
