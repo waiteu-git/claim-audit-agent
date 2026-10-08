@@ -180,17 +180,19 @@ def test_the_leak_patterns_are_live_positive_controls():
 def test_the_result_has_a_quote_band_and_a_replan_band_that_start_hidden():
     p = _parsed()
     by_id = {a.get("id"): a for t, a in p.tags if a.get("id")}
-    for rid in ("quote-band", "quote-band-sum", "quote-examples", "replan-band", "replan-steps", "replan-end"):
+    for rid in ("trust-band", "trust-who", "trust-quote", "trust-example", "trust-flow", "replan-band", "replan-steps", "replan-end"):
         assert rid in by_id, rid
-    assert "hidden" in by_id["quote-band"] and "hidden" in by_id["replan-band"]  # 材料の無い実行では出さない
-    assert "コードが検証した引用" in HTML and "判断が変わった場面" in HTML
+    assert "hidden" in by_id["trust-band"] and "hidden" in by_id["replan-band"]  # 材料の無い実行では出さない
+    assert "hidden" in by_id["trust-quote"] and "hidden" in by_id["trust-example"]
+    assert "判定の根拠" in HTML and "調べ方を変えた場面" in HTML
 
 
 def test_the_quote_band_summary_and_examples_follow_the_agreed_wording_and_limits():
-    assert '"引用検証 " + fmt(s.quotes_checked) + "件中" + fmt(s.quotes_verbatim) + "件が逐語一致・"' in JS
-    assert '"件を推測へ降格"' in JS
-    assert "ex.length >= 3" in JS  # 弾いた例は最大3件
-    assert JS.count("clip(x.model, 80)") == 1 and JS.count("clip(x.original, 80)") == 2  # 原文の引用は80字まで
+    assert "AIの引用は、コードが要項と照合しました。" in JS
+    assert "一度受け付けず、引き直させました" in JS  # 「棄却」でなく「受け付けず」（本人の裁定 S09 B）
+    assert "examples.length < 1" in JS  # 照合の例は1つだけ（成功の流れ。赤い✕の並びにしない）
+    assert JS.count("clip(ex.model, 54)") == 1 and JS.count("clip(ex.original, 54)") == 1  # 例の引用は短く切る
+    assert "clip(r.span.original_span, 80)" in JS  # 要件の引用は80字まで
 
 
 def test_the_bands_do_not_break_when_the_record_lacks_the_fields_they_need():
@@ -206,9 +208,8 @@ def test_the_replan_band_shows_two_or_three_steps_each_jumping_to_the_trace():
 
 
 def test_the_ui_explains_that_the_code_decides_and_names_no_other_product_or_distributed_skill():
-    for text in (HTML, JS):
-        assert "判定は観測からコードが決めます" in text
-    assert "モデルは書けません" in HTML
+    assert "判定は、確かめた結果からコードが決めます。AIは判定を書けません。" in HTML
+    assert "判定はすべて、コードが出しました。" in JS
     for name, text in UI_FILES.items():
         for word in ("スキル", "他社", "競合", "比較して"):
             assert word not in text, (name, word)
@@ -242,17 +243,40 @@ def test_the_bundled_preset_3_replay_has_no_replan_and_records_that_the_planner_
     assert not any(e["type"] == "model_call" and e["purpose"] == "planner" for e in rec["events"])
 
 
-def test_the_who_decided_band_is_computed_from_the_record_and_hidden_when_it_cannot_be():
-    assert 'id="who-band"' in HTML and 'id="who-sum"' in HTML
-    assert re.search(r'<section id="who-band"[^>]*\bhidden\b', HTML)
-    block = JS.split("function renderWhoBand")[1].split("// ---- コードが検証した引用")[0]
-    for text in ("AUTORUN（コード）が", "Planner（モデル）が", "方針変更 ", "モデル呼び出し ", "見積もり ",
-                 "AUTORUN で全部決まったため、Planner（モデル）は呼ばれていません", "planner_skipped"):
+def test_the_run_breakdown_is_computed_from_the_record_and_left_out_when_it_cannot_be():
+    # 「誰が決めたか」の内訳は、実行の詳細の中の事実の行になった（AUTORUN・Planner・Governor などの内部の呼び名は画面に出さない）
+    assert 'id="facts"' in HTML and 'id="run-box"' in HTML
+    block = JS.split("function renderFacts")[1].split("document.addEventListener")[0]
+    for text in ("自動の検査 ", "AIが選んだ検査 ", "AIの呼び出し", "方針の変更", "見積もり費用", "実行の制限による拒否"):
         assert text in block, text
-    assert 'typeof s.est_cost_micro_jpy !== "number"' in block and "!Array.isArray(events)" in block and "if (!checks) return;" in block
-    assert '"who-band"' in JS.split("function resetResult")[1].split("function onMode")[0]
-    for word in ("スキル", "他社", "競合", "比較して"):
-        assert word not in block
+    assert 'e.phase === "AUTORUN"' in block and "if (checks && " in block  # AUTORUN の無い古い記録では内訳を言えない
+    for word in ("Planner（", "AUTORUN（", "Governor", "REPLAY（", "スキル", "他社", "競合", "比較して"):
+        assert word not in JS, word
+
+
+def test_the_unverifiable_rows_are_split_by_reason_code_into_self_check_and_not_checked():
+    # 確認不能の判定ラベルは変えず、理由コード（HUMAN_ONLY・FUTURE）の行だけ「ご自身で確認」と呼ぶ。色・記号・文字の3重表記
+    assert 'const HUMAN_VERDICT = ["v-human", "☑", "ご自身で確認"]' in JS
+    assert 'const HUMAN_CODES = ["HUMAN_ONLY", "FUTURE"]' in JS
+    assert ".v-human " in CSS and ".v-unk " in CSS
+    assert "ご自身で確認" in JS and "確認不能" in JS
+
+
+def test_a_run_that_switched_from_live_to_the_saved_run_resets_the_screen_and_says_why():
+    block = JS.split("function onMode")[1].split("function onError")[0]
+    assert "m.switched" in block and "resetResult()" in block
+    assert "ライブ実行が時間内に終わらなかったため、保存済みの実行を表示しています。" in JS
+    assert ".run-mode.switched" in CSS  # 目立たせる（通常の状態の行と同じ見た目にしない）
+
+
+def test_a_saved_run_does_not_draw_the_time_gauge_because_its_cap_may_differ_from_todays():
+    block = JS.split("function renderBudget")[1].split("function jumpTo")[0]
+    assert "withTime" in block and 'key === "wall_ms_left" && !withTime' in block
+
+
+def test_an_aborted_result_says_no_verdict_was_made_instead_of_claiming_nothing_to_fix():
+    block = JS.split("function renderHero")[1].split("function renderWarning")[0]
+    assert 'rec.status === "ABORTED"' in block and "実行を中止したため、判定は出していません。" in block
 
 
 def test_the_replan_and_who_bands_use_only_text_nodes_and_the_replay_has_no_hidden_text():
