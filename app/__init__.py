@@ -12,7 +12,8 @@
   ingest/               sanitize（取得物 → SanitizedDoc）・css_hide・inject_scan
   quotes/               DocIndex・QuoteChecker（引用の逐語照合。「検証済み」の印を発行できるのはここだけ）
   github_repo.py        GitHub 公開リポジトリのURLの入口の検証（parse_repo_url）・取得先URLの組み立て・固定ファイルの取得（第7弾の土台。
-                        配線・画面・判定表への統合は未実装。contracts・config・errors・jsonlog だけに依存し、他から import されない）
+                        配線・画面・判定表への統合は未実装。contracts・config・errors・jsonlog だけに依存する。
+                        今は誰からも import されず、取り込み後に使うのは agent／web だけ＝tests/test_github_repo.py が固定）
   checks/               http_probe・auth_wall・text_length・cloud_run_signature・html_signals・class_screen・registry・leak_scan・
                         contains_terms（可視テキストの語の有無。固定辞書）・autorun（AUTORUN の計画と実行。第5弾）・
                         repo_inspect（リポジトリの固定ファイルから事実だけを返す純関数。判定は書かない。第7弾の土台）
@@ -35,7 +36,8 @@ import の向き（上が下へ依存してよい。逆向き・循環は tests/
   github_repo                  contracts・config・errors・jsonlog（net には依存しない。S3 の規則は contracts.RepoRawScope を共有する）
   net / model / quotes         contracts・config・jsonlog・errors・textsafe（互いには依存しない）
   ingest                       net.urlcheck（リンク表のスコープ判定を取得時の検査と同じ定義にするため）・textsafe
-  checks                       ingest.sanitize.decode_body（本文の文字コードの読みを1つにするため）・config・errors
+  checks                       ingest.sanitize.decode_body（本文の文字コードの読みを1つにするため）・ingest.inject_scan（repo_inspect が偽の命令の疑いの件数を
+                               既存の定義で数えるため）・config・errors
   adjudicate                   checks
   quota / egress_guard         config・contracts・jsonlog（state_firestore は quota の型だけ）
   fixtures                     site・gen は contracts・config だけ。eval は agent を組み立てる（入口の扱い）

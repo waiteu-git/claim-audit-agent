@@ -481,3 +481,73 @@ def test_the_fixed_names_are_exactly_the_documented_seven():
     assert len(REPO_FILE_NAMES) <= FETCH_LIMITS.repo_max_files
     assert all(r"/" not in n and n == n.strip() for n in REPO_FILE_NAMES)
     assert len(list(itertools.chain(REPO_FILE_NAMES))) == len(set(REPO_FILE_NAMES))
+
+
+# ====================================================================================================
+# 取り込み前の敵対レビューの指摘
+# ====================================================================================================
+SECRET_INPUTS = [
+    ("https://github.com/o/secret-repo.git", ("secret-repo",)),
+    ("https://github.com/secret-owner-name-/r", ("secret-owner-name-",)),
+    ("https://github.com/" + "secretowner" * 4 + "/r", ("secretowner",)),
+    ("https://github.com/o/" + "secretrepo" * 11, ("secretrepo",)),
+    ("https://github.com/secret-owner/.", ("secret-owner",)),
+    ("https://github.com/secret-owner/..", ("secret-owner",)),
+    ("https://github.com/secret-owner/secret-repo.GIT/", ("secret-repo", "secret-owner")),
+    ("https://github.com/-secret-owner/secret-repo", ("secret-owner", "secret-repo")),
+]
+
+
+@pytest.mark.parametrize("text, secrets", SECRET_INPUTS)
+def test_a_rejection_keeps_no_cause_no_context_and_no_input_text_in_the_traceback(text, secrets):
+    """指摘2・3・7: ValidationError（input_value に owner/repo を持つ）が原因連鎖に残り、log_exception の traceback に出た。"""
+    import traceback
+
+    with pytest.raises(AppError) as ei:
+        parse_repo_url(text)
+    e = ei.value
+    assert e.__cause__ is None and e.__context__ is None
+    full = "".join(traceback.format_exception(e))
+    for secret in secrets:
+        assert secret not in full, secret
+    assert "ValidationError" not in full and "input_value" not in full
+
+
+@pytest.mark.parametrize("text, secrets", SECRET_INPUTS)
+def test_a_rejection_logged_by_log_exception_does_not_contain_the_input(text, secrets, caplog):  # noqa: ANN001
+    import logging
+
+    from app.jsonlog import log_exception
+
+    caplog.set_level(logging.DEBUG)
+    with pytest.raises(AppError) as ei:
+        parse_repo_url(text)
+    log_exception("web.run_failed", ei.value)
+    logged = " ".join(str(getattr(r, "fields", "")) + r.getMessage() for r in caplog.records)
+    assert logged
+    for secret in secrets:
+        assert secret not in logged
+
+
+def test_raw_file_url_rechecks_a_ref_built_without_validation():
+    """指摘10: model_copy(update=…)・model_construct は検証器を通らない。URL に入れる直前に確かめる。"""
+    good = RepoRef(owner="o", repo="r")
+    for bad in (
+        good.model_copy(update={"owner": "../../evil"}),
+        good.model_copy(update={"repo": "x?y#z"}),
+        RepoRef.model_construct(owner="a/b", repo=".."),
+        RepoRef.model_construct(owner="o", repo="r.git"),
+        RepoRef.model_construct(owner="", repo="r"),
+    ):
+        with pytest.raises(ValueError) as ei:
+            raw_file_url(bad, "README.md")
+        assert "evil" not in str(ei.value) and "x?y" not in str(ei.value)
+    assert raw_file_url(good, "README.md").endswith("/o/r/HEAD/README.md")
+
+
+def test_github_repo_is_used_only_by_the_composers():
+    """指摘17: github_repo を import してよいのは agent／web／cli だけ（今は誰も import していない）。"""
+    from tests.test_repo_hygiene import _app_edges
+
+    users = {unit for unit, deps in _app_edges().items() if "github_repo" in deps}
+    assert users <= {"agent", "web", "cli"}, users

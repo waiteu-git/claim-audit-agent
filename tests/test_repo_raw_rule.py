@@ -411,7 +411,7 @@ async def test_404_429_5xx_and_network_failures_stay_distinct_end_to_end():
     r = rig({}, connect_errors={PUBLIC_IP: OSError("fake")})
     # connect_errors は ConnectError 相当の例外を投げる。ここでは 404（routes 無し）と区別されることだけを見る
     res = (await get(r, URL)).result
-    assert res.status in (404, None)
+    assert res.outcome is FetchOutcome.NETWORK_ERROR and res.status is None  # （注入の仕方は下の専用テストで本物の接続失敗にしている）
 
 
 # ------------------------------------------------------------------ S3 を通した取得の合計・件数の上限（実際の規則の上で）
@@ -489,3 +489,81 @@ def test_existing_env_clean_list_knows_the_new_variable():
     from tests.conftest import _APP_ENV_KEYS
 
     assert "GITHUB_RAW_ENABLED" in _APP_ENV_KEYS
+
+
+# ====================================================================================================
+# 取り込み前の敵対レビューの指摘
+# ====================================================================================================
+async def test_a_real_connection_failure_is_transient_not_not_found():
+    """指摘16: 通信の失敗は NETWORK_ERROR → TRANSIENT。404（NOT_FOUND）とは別。"""
+    import httpcore
+
+    r = rig({}, connect_errors={PUBLIC_IP: httpcore.ConnectError("fake")})
+    d = await get(r)
+    assert d.result.outcome is FetchOutcome.NETWORK_ERROR and d.result.status is None
+    assert any(n.startswith("net.ConnectError") for n in d.notes)  # 想定外の例外の枝（net.unexpected）ではなく、接続失敗の枝
+    got = await fetch_repo_files(REF, r.fetch)
+    assert all(f.status is RepoFileStatus.TRANSIENT for f in got.files[:1])
+    assert got.readme.status is RepoFileStatus.TRANSIENT and not got.nothing_found
+
+
+# ---- S3 自身の取りすぎ止め（指摘4）
+def relay_app(*, enabled, limits=None, clock=None):  # noqa: ANN001, ANN201
+    from fastapi.testclient import TestClient
+
+    from app.config import FetchLimits
+    from app.contracts import FetchResult
+    from app.net.fetcher_server import create_fetcher_app
+
+    calls: list[str] = []
+
+    class Port:
+        async def fetch(self, request):  # noqa: ANN001, ANN202
+            calls.append(request.url)
+            return FetchResult(requested_url=request.url, final_url=request.url, outcome=FetchOutcome.OK, status=200, body=b"x" * 1000, content_kind=ContentKind.PLAIN)
+
+    s = load_settings({"ROLE": "fetcher", **({"GITHUB_RAW_ENABLED": "1"} if enabled else {})})
+    kw = {"limits": limits or FetchLimits(), **({"clock": clock} if clock else {})}
+    app = create_fetcher_app(s, fetch=Port(), **kw)
+    return TestClient(app), calls
+
+
+AUTH = {"authorization": "Bearer t"}
+
+
+def post(client, url):  # noqa: ANN001, ANN201
+    return client.post("/fetch", json={"url": url}, headers=AUTH)
+
+
+def test_s3_stops_a_flood_of_github_requests_by_itself_when_the_rule_is_on():
+    """S2 が乗っ取られて任意の owner/repo を繰り返し要求しても、S3 自身が窓あたりの数で頭打ちにする。"""
+    from app.config import FetchLimits
+
+    client, calls = relay_app(enabled=True, limits=FetchLimits(repo_relay_requests_per_min=5))
+    codes = [post(client, f"https://{BASE.replace('example-owner/example-repo', f'owner{i}/repo')}/README.md").status_code for i in range(12)]
+    assert codes == [200] * 5 + [429] * 7
+    assert len(calls) == 5  # 頭打ちの後は取りに行かない
+    assert post(client, "https://svc.example.invalid/fx/a").status_code == 200  # GitHub 以外の要求は数えない
+
+
+def test_s3_limit_by_bytes_and_the_window_resets():
+    from app.config import FetchLimits
+
+    now = [0.0]
+    client, calls = relay_app(enabled=True, limits=FetchLimits(repo_relay_requests_per_min=100, repo_relay_bytes_per_min=2500), clock=lambda: now[0])
+    codes = [post(client, URL).status_code for _ in range(5)]
+    assert codes == [200, 200, 200, 429, 429]  # 1,000 バイトずつ。3 件で 2,500 を超えた後は断る
+    now[0] = 61.0
+    assert post(client, URL).status_code == 200  # 窓が替われば再び通る
+
+
+def test_s3_does_not_count_anything_when_the_rule_is_off():
+    client, calls = relay_app(enabled=False)
+    assert all(post(client, URL).status_code == 200 for _ in range(300))
+    assert len(calls) == 300
+
+
+def test_the_default_relay_limits_leave_room_for_normal_runs():
+    # 1実行は最大 8 件・768KB。1分に 10 実行ぶんは通る
+    assert FETCH_LIMITS.repo_relay_requests_per_min >= 10 * FETCH_LIMITS.repo_max_files
+    assert FETCH_LIMITS.repo_relay_bytes_per_min >= 10 * FETCH_LIMITS.repo_max_total_bytes

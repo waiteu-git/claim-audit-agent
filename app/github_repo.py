@@ -91,18 +91,20 @@ def parse_repo_url(text: str) -> RepoRef:
     if not isinstance(text, str) or not text or len(text) > MAX_REPO_URL_LENGTH:
         raise _invalid()
     m = _REPO_URL.fullmatch(text)
-    if m is None:
+    # 形の検査は pydantic を通さず contracts の関数で直接行う。ValidationError は入力の値（input_value）を持ち、原因連鎖
+    # （__cause__／__context__）から log_exception の traceback に owner/repo が出てしまう。例外は except の外で、原因を付けずに投げる。
+    if m is None or not is_github_owner(m["owner"]) or not is_github_repo(m["repo"]):  # 長さ・末尾ハイフン・"." ".." ".git" 終わり
         raise _invalid()
-    try:
-        return RepoRef(owner=m["owner"], repo=m["repo"])
-    except ValueError as e:  # 長さ・末尾ハイフン・"." ".." ".git" 終わり
-        raise _invalid() from e
+    return RepoRef(owner=m["owner"], repo=m["repo"])
 
 
 def raw_file_url(ref: RepoRef, name: str) -> str:
     """取得先 URL。owner / repo は検証済みの RepoRef、name は固定名のどれかだけ（それ以外は ValueError）。"""
     if name not in REPO_FILE_NAMES:
         raise ValueError("固定名ではありません")
+    # RepoRef は model_copy(update=…)・model_construct では検証を通らずに作れる。URL に入れる直前にもう一度確かめる
+    if not (is_github_owner(ref.owner) and is_github_repo(ref.repo)):
+        raise ValueError("RepoRef が owner/repo の形ではありません")
     return f"https://{GITHUB_RAW_HOST}/{ref.owner}/{ref.repo}/{GITHUB_RAW_REF}/{name}"
 
 

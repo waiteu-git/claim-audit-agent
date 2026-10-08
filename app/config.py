@@ -223,6 +223,10 @@ class FetchLimits(BaseModel):
     repo_max_files: int = 8  # 1実行の取得件数（呼び出し側 github_repo が数える）
     repo_max_file_bytes: int = 256 * 1024  # 1ファイル。超えたら読まずに／読み切らずに拒否（S3 が強制する）
     repo_max_total_bytes: int = 768 * 1024  # 1実行の合計（呼び出し側 github_repo が数える）
+    # S3 自身の取りすぎ止め（インスタンスごと・固定窓）。呼び出し側の件数・合計は S2 が乗っ取られると効かないので、規則が有効な時の
+    # raw.githubusercontent.com への要求を S3 でも数える。1実行は最大 8 件・768KB なので、1分に約 15 実行ぶん。超えたら 429（再試行可）
+    repo_relay_requests_per_min: int = 120
+    repo_relay_bytes_per_min: int = 12 * 1024 * 1024
     probe_retry_max: int = 1  # 1回だけ再試行（S-04）。再試行を fetches_probe に数えるかは設計に記載なし（未裁定）
 
 
