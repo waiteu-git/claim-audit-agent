@@ -21,7 +21,8 @@
   state_firestore.py    StatePort の Firestore 実装（本番。実接続はテストしない）
   egress_guard.py       ASGI の全パス共通上限（1分あたりのリクエスト数・転送量）
   fixtures/             プリセット②③の架空フィクスチャ（site/・site.py・gen.py・expected.json・eval.py）
-  web/                  公開面 S2（`python -m app.web`。ROLE=fetcher なら net/fetcher_server の S3）・静的 UI・同梱の REPLAY
+  web/                  公開面 S2（`python -m app.web`。ROLE=fetcher なら net/fetcher_server の S3）・静的 UI・同梱の REPLAY・
+                        examples.py（プリセットの要項リンクと、仕込んだ欠陥 → 見つけた結果の対応。replay → examples の一方向）
   main.py               S1 の疎通確認サービス（既存。/probe は S1 だけ）
 
 import の向き（上が下へ依存してよい。逆向き・循環は tests/test_repo_hygiene.py が止める）:
