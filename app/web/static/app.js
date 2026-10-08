@@ -240,6 +240,7 @@
   function resetResult() {
     $("result").hidden = false;
     for (const id of ["summary", "contradictions", "trace", "budget", "source-body", "filters", "reqs", "facts", "trust-flow", "replan-steps"]) clear($(id));
+    $("list-status").textContent = "";
     for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "hero-others", "list-section", "omitted", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
     $("run-mode").textContent = "";
     $("run-mode").className = "run-mode";
@@ -457,7 +458,12 @@
         document.createTextNode(label),
         el("span", { cls: "fc", text: fmt(cnt[key]) }),
       ]);
-      b.addEventListener("click", () => { v.filter = key; renderFilters(); renderList(); });
+      b.addEventListener("click", () => {
+        v.filter = key;
+        renderFilters();
+        renderList();
+        $("list-status").textContent = label + " " + fmt(cnt[key]) + " 件を表示しています。";
+      });
       box.appendChild(b);
     }
   }
@@ -472,8 +478,8 @@
       if (!rows.length) continue;
       const compact = tone === "human" || tone === "tool" || tone === "ref";
       const limit = v.filter === "all" && compact && !v.more[tone] ? COMPACT_LIMIT : rows.length;
-      const shared = compact ? sharedReason(rows) : ""; // 同じ理由文が並ぶ組は、見出しに1回だけ出して、各カードでは繰り返さない
-      const head = el("h3", { cls: "grouphead", attrs: { id: "g-" + tone } }, [
+      const shared = tone === "human" || tone === "tool" ? sharedReason(rows) : ""; // 同じ理由文が並ぶ組は、見出しに1回だけ出して、各カードでは繰り返さない
+      const head = el("h4", { cls: "grouphead", attrs: { id: "g-" + tone } }, [
         el("span", { cls: "gcount", text: fmt(rows.length) }),
         document.createTextNode(GROUP[tone][0]),
         el("span", { cls: "sub", text: shared || GROUP[tone][1] }),
@@ -488,7 +494,7 @@
       const section = el("section", { cls: "group c-" + tone, attrs: { "aria-labelledby": "g-" + tone } }, [head, ol]);
       if (rows.length > limit) {
         const more = el("button", { cls: "btn showmore", text: "ほか " + fmt(rows.length - limit) + " 件を表示", attrs: { type: "button" } });
-        more.addEventListener("click", () => { v.more[tone] = true; renderList(); });
+        more.addEventListener("click", () => { v.more[tone] = true; renderList(); $("list-status").textContent = GROUP[tone][0] + " をすべて表示しました。"; });
         section.appendChild(more);
       }
       box.appendChild(section);
@@ -516,7 +522,10 @@
     ]);
     const main = el("div", { cls: "rcard-main" });
     main.appendChild(el("p", { cls: "quote" + (r.span ? "" : " quote-none"), text: r.span ? "「" + clip(r.span.original_span, 80) + "」" : "（要項に引用できない推測）" + (r.gist ? " " + r.gist : "") }));
-    if (x.reason && x.reason !== shared) main.appendChild(el("p", { cls: "reason", text: x.reason }));
+    if (x.reason && x.reason !== shared) {
+      if (x.tone === "ref") main.appendChild(el("details", { cls: "more" }, [el("summary", { text: "参考にとどめた理由" }), el("p", { cls: "reason", text: x.reason })])); // 参考は長い理由を畳む
+      else main.appendChild(el("p", { cls: "reason", text: x.reason }));
+    }
     const evidence = x.v && x.name !== "参考" && !compact ? x.v.evidence || [] : [];
     if (evidence.length) {
       const chips = el("div", { cls: "evidence" });
@@ -557,6 +566,7 @@
     const done = (ok) => {
       const old = btn.textContent;
       btn.textContent = ok ? "コピーしました" : "コピーできませんでした";
+      $("list-status").textContent = ok ? "チェックリストをコピーしました。" : "チェックリストをコピーできませんでした。";
       setTimeout(() => { btn.textContent = old; }, 2000);
     };
     try { navigator.clipboard.writeText(text).then(() => done(true), () => done(false)); } catch (e) { done(false); }
@@ -581,6 +591,7 @@
       dl.appendChild(el("dd", { text: "同梱の記録のため80字までに切り詰めています（位置は元の文のものです）" }));
     }
     $("source").hidden = false;
+    $("source").scrollIntoView({ block: "center" });
     $("source-close").focus();
   }
 
