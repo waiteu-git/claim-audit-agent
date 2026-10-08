@@ -242,8 +242,9 @@ def make_rig(
     prefixes=VECTOR_PREFIXES,  # noqa: ANN001
     limits: FetchLimits = FETCH_LIMITS,
     connect_errors: Mapping[str, Exception] | None = None,
+    repo_raw=None,  # noqa: ANN001  contracts.RepoRawScope | None（GitHub 固定ファイルの規則。既定は無効）
 ) -> Rig:
     resolver = FakeResolver(dns)
     net = FakeInternet(routes, connect_errors=connect_errors)
-    sf = SafeFetch(prefixes, limits=limits, resolver=resolver, network_backend=net, ssl_context=FAKE_SSL)
+    sf = SafeFetch(prefixes, limits=limits, resolver=resolver, network_backend=net, ssl_context=FAKE_SSL, repo_raw=repo_raw)
     return Rig(fetch=sf, resolver=resolver, net=net, limits=limits)
