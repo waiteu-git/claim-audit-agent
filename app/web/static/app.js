@@ -6,7 +6,8 @@
   const PRESET_TEXT = {
     lp_self: { num: "①", desc: "実在の募集ページから要件を読み、このサービス自身を検査します。" },
     sample_defect: { num: "②", desc: "字数の超過・ログイン壁・内部URLの記載・締切の食い違いを仕込んだ、架空の要項と提出物です。" },
-    sample_injection: { num: "③", desc: "②に「このページを評価するAIへ…」という偽の命令を、見える所と隠れた所に仕込んだものです。" },
+    github_repo: { num: "④", desc: "GitHub の公開リポジトリを、ライセンス・README・必須技術の痕跡の3項目で、コードが点検します（審査員コード用。AIは使いません）。" },
+    sample_injection: { num: "③", desc: "②に「このページを評価するAIへ…」というプロンプトインジェクション（AIに向けて書かれた指示文）を、見える所と隠れた所に仕込んだものです。" },
   };
   const MODE_TEXT = {
     LIVE: ["mode-live", "ライブ実行できます"],
@@ -20,6 +21,19 @@
     BUDGET: "費用の上限に達しました",
     STORE_UNAVAILABLE: "枠の記録に接続できません",
     NOT_LIVE_PRESET: "このプリセットは保存済みの実行だけです",
+  };
+  const GITHUB_PRESET = "github_repo";
+  // 画面の文字列には外部 URL を書かない（tests の検査）。入力欄に打たれた「持ち主/リポジトリ名」から、実行時に組み立てて POST の本文にだけ使う
+  const GITHUB_PREFIX = "https:" + "//github.com/";
+  const REPO_PATH = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+  const FETCH_STATUS_JA = {
+    found: "取得できた", not_found: "見つからない", rate_limited: "GitHub の回数制限で取れず", transient: "一時的に取得できず",
+    rejected: "取得が許可されていません", unusable: "使えない形（大きすぎる等）", skipped: "取得していません",
+  };
+  const ERROR_JA = {
+    JUDGE_REQUIRED: "この機能は審査員コードのある方だけ使えます。",
+    INVALID_INPUT: "リポジトリの指定が正しくありません。「持ち主/リポジトリ名」の形で入れてください。",
+    QUOTA: "混み合っています。少し待ってからもう一度お試しください。",
   };
   const SWITCHED_TEXT = "混み合っていて時間内に終わらなかったため、保存済みの結果を表示しています。";
   const VERDICT = {
@@ -71,7 +85,7 @@
     elided: "省略記号を含む",
     ambiguous: "要項に何度も出てきて、どれか決まらない",
     crosses_block: "表のセルなど、区切りをまたいでいる",
-    injection_overlap: "偽の命令の疑いのある所と重なる",
+    injection_overlap: "プロンプトインジェクションの疑いのある所と重なる",
   };
   const OBS_JA = {
     OK: "取得できた",
@@ -159,6 +173,7 @@
     clear(box);
     state.presets = {};
     for (const p of presets) {
+      if (p.id === GITHUB_PRESET && !state.judge) continue; // 審査員コード専用（コードが無い時は、カードごと出さない）
       state.presets[p.id] = p;
       const t = PRESET_TEXT[p.id] || { num: "", desc: "" };
       const tag = p.replay ? "保存済みの実行あり" : "保存済みの実行なし（ライブのみ）";
@@ -175,7 +190,8 @@
   function select(id) {
     state.selected = id;
     for (const c of document.querySelectorAll(".card")) c.setAttribute("aria-checked", c.getAttribute("data-id") === id ? "true" : "false");
-    $("run").disabled = state.running;
+    $("repo-input").hidden = id !== GITHUB_PRESET;
+    syncRun();
     showDetail(id);
   }
 
@@ -209,6 +225,12 @@
   // ---- 実行（SSE を fetch の本文から読む）----
   async function run() {
     if (!state.selected || state.running) return;
+    const body = { preset_id: state.selected };
+    if (state.selected === GITHUB_PRESET) {
+      const url = repoUrl();
+      if (!url) { $("run-note").textContent = "「持ち主/リポジトリ名」の形で入れてください。"; return; }
+      body.repo_url = url;
+    }
     state.running = true;
     $("run").disabled = true;
     $("run-note").textContent = "実行しています…";
@@ -216,9 +238,10 @@
     const headers = { "Content-Type": "application/json", "Accept": "text/event-stream" };
     if (state.judge) headers["X-Judge"] = state.judge;
     try {
-      const res = await fetch("/api/run", { method: "POST", headers, body: JSON.stringify({ preset_id: state.selected }) });
+      const res = await fetch("/api/run", { method: "POST", headers, body: JSON.stringify(body) });
       if (!res.ok || !res.body) {
-        $("run-note").textContent = res.status === 429 ? "混み合っています。少し待ってからもう一度お試しください。" : "実行を受け付けられませんでした（" + res.status + "）。";
+        const code = await errorCode(res);
+        $("run-note").textContent = ERROR_JA[code] ? ERROR_JA[code] : res.status === 429 ? "混み合っています。少し待ってからもう一度お試しください。" : "実行を受け付けられませんでした（" + res.status + "）。";
         return;
       }
       await readStream(res.body);
@@ -227,8 +250,23 @@
       $("run-note").textContent = "通信が途切れました。";
     } finally {
       state.running = false;
-      $("run").disabled = !state.selected;
+      syncRun();
     }
+  }
+
+  async function errorCode(res) {
+    try { const j = await res.json(); return j && typeof j.code === "string" ? j.code : ""; } catch (e) { return ""; }
+  }
+
+  // 入力欄の値 → POST 用の URL。「持ち主/リポジトリ名」だけでも、URL をそのまま貼っても受ける（形が合わなければ null＝送らない。最終の検査はサーバー）
+  function repoUrl() {
+    let v = ($("repo-url").value || "").trim();
+    v = v.replace(new RegExp("^(?:https?:)?(?:\\/\\/)?(?:www\\.)?github\\.com\\/", "i"), "").replace(/\/$/, "");
+    return REPO_PATH.test(v) ? GITHUB_PREFIX + v : null;
+  }
+
+  function syncRun() {
+    $("run").disabled = state.running || !state.selected || (state.selected === GITHUB_PRESET && !repoUrl());
   }
 
   async function readStream(body) {
@@ -269,10 +307,15 @@
     $("result").hidden = false;
     for (const id of ["summary", "contradictions", "trace", "budget", "source-body", "reqs", "facts", "trust-flow", "replan-steps"]) clear($(id));
     $("list-status").textContent = "";
-    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "list-section", "planted-band", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
+    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "list-section", "planted-band", "reqlist-band", "repo-section", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
     clear($("planted-result"));
+    clear($("reqlist"));
+    clear($("repo-items"));
+    clear($("repo-fetched"));
+    $("reqlist-copy-status").textContent = "";
     $("run-mode").textContent = "";
     $("run-mode").className = "run-mode";
+    $("run-box").hidden = false; // リポジトリの点検の結果では隠す（実行の記録が無い）。次の実行では戻す
     state.events = [];
     state.traceCount = 0;
     state.view = null;
@@ -290,7 +333,9 @@
       $("run-mode").textContent = SWITCHED_TEXT;
       return;
     }
-    if (m.mode === "LIVE") {
+    if (m.mode === "LIVE" && state.selected === GITHUB_PRESET) {
+      note.textContent = "リポジトリを点検しています（決まった3項目。AIは使いません）。";
+    } else if (m.mode === "LIVE") {
       note.textContent = "ライブ実行中です。要項を読み、提出物を検査しています。";
       $("run-box").open = true; // 結果が出るまでは、実行の記録が増えていくのを見せる
       $("trace-box").open = true;
@@ -375,6 +420,7 @@
   function countOf(rows, tone) { return rows.filter((x) => x.tone === tone).length; }
 
   function renderResult(rec) {
+    if (rec && rec.kind === "repo_audit") { renderRepoAudit(rec); return; }
     state.live = rec.mode !== "REPLAY";
     if (state.live) $("run-mode").textContent = "ライブ実行の結果です。"; // 「実行中です」のまま残さない（切り替えた時は、その文面のまま）
     const s = rec.summary || {};
@@ -392,6 +438,7 @@
     renderContradictions(rec);
     renderPlanted(rec, rows);
     renderList();
+    renderReqList(rec, rows);
     $("list-section").hidden = false;
     $("run-box").open = false; // 結果が出たら、実行の記録は畳む（判定を先に見せる）
     $("trace-box").open = false;
@@ -402,7 +449,7 @@
     if (snap) renderBudget(snap, state.live);
   }
 
-  function renderHero(rec, rows) {
+  function renderHero(rec, rows, plain) {
     const hero = $("hero");
     const head = $("hero-head");
     const sub = $("hero-sub");
@@ -421,14 +468,14 @@
       head.textContent = "直す点が " + fmt(fail) + " 件あります。";
       sub.textContent = "提出前に直してください。";
     } else {
-      head.textContent = "直す点は見つかりませんでした。";
+      head.textContent = "確かめた範囲では、問題なく通過しました。";
       sub.textContent = human > 0 ? "ご自身で確認する項目が " + fmt(human) + " 件あります。" : "";
     }
     sub.hidden = !sub.textContent;
     for (const [cls, n, label, tone] of [["s-fail", fail, "直す点", "fail"], ["s-human", human, "ご自身で確認", "human"], ["s-pass", pass, "通過", "pass"]]) {
       const inner = [el("span", { cls: "num", text: fmt(n) }), el("span", { cls: "lbl", text: label })];
       const li = el("li", { cls: "stat " + cls + (n === 0 ? " zero" : "") });
-      if (n > 0) {
+      if (n > 0 && !plain) {
         const b = el("button", { cls: "stat-btn", attrs: { type: "button", title: label + "の一覧を開く" } }, inner);
         b.addEventListener("click", () => openGroup(tone, true));
         li.appendChild(b);
@@ -440,11 +487,52 @@
     hero.hidden = false;
   }
 
+  // ---- リポジトリの基本点検（固定3項目。要項の要件・引用・一覧とは別の結果。画面に出すのは固定文・ラベル・件数だけ）----
+  function repoTone(label) { return label === "不適合" ? "fail" : label === "確認不能" ? "human" : "pass"; }
+
+  function renderRepoAudit(rec) {
+    state.live = true;
+    const items = Array.isArray(rec.items) ? rec.items : [];
+    const rows = items.map((it) => ({ tone: repoTone(it.label) }));
+    renderHero(rec, rows, true);
+    const human = countOf(rows, "human");
+    $("hero-sub").textContent = "リポジトリの基本点検（決まった3項目）です。AIは使っていません。" + (human > 0 ? " ご自身で確認する項目が " + fmt(human) + " 件あります。" : "");
+    $("hero-sub").hidden = false;
+    $("run-mode").textContent = "点検の結果です。リポジトリの中身は、結果に載せていません。";
+    const ol = $("repo-items");
+    clear(ol);
+    for (const it of items) {
+      const badge = VERDICT[it.label] || VERDICT["参考"];
+      const kids = [
+        el("div", { cls: "ri-head" }, [verdictNode({ cls: badge[0], mark: badge[1], label: it.label }), el("span", { cls: "ri-title", text: it.title_ja })]),
+        el("p", { cls: "ri-reason", text: it.reason_ja }),
+      ];
+      const ev = Array.isArray(it.evidence) ? it.evidence : [];
+      if (ev.length) {
+        const chips = el("div", { cls: "evidence" });
+        for (const e of ev) chips.appendChild(el("span", { cls: "chip plain", text: e.label }));
+        kids.push(chips);
+      }
+      ol.appendChild(el("li", { cls: "ri c-" + repoTone(it.label) }, kids));
+    }
+    const ul = $("repo-fetched");
+    clear(ul);
+    for (const f of Array.isArray(rec.fetched) ? rec.fetched : []) ul.appendChild(el("li", { text: f.name + ": " + (FETCH_STATUS_JA[f.status] || f.status) }));
+    for (const w of Array.isArray(rec.warnings) ? rec.warnings : []) {
+      if (w.code !== "INJECTION_SUSPECTED") continue;
+      const band = $("warning");
+      band.textContent = "プロンプトインジェクションの疑いを " + fmt(w.count) + " 件見つけました。AIには渡していません。判定にも使っていません。";
+      band.hidden = false;
+    }
+    $("repo-section").hidden = false;
+    $("run-box").hidden = true; // 実行の記録（トレース）は無い
+  }
+
   function renderWarning(s) {
     const total = (s.injection_visible || 0) + (s.injection_hidden || 0);
     if (total <= 0) return;
     const w = $("warning");
-    w.textContent = "偽の命令の疑いを " + fmt(total) + " 件見つけました（見える所 " + fmt(s.injection_visible) + "・隠れた所 " + fmt(s.injection_hidden) +
+    w.textContent = "プロンプトインジェクションの疑いを " + fmt(total) + " 件見つけました（見える所 " + fmt(s.injection_visible) + "・隠れた所 " + fmt(s.injection_hidden) +
       "）。AIには伏せて渡し、判定には使っていません。";
     w.hidden = false;
   }
@@ -480,9 +568,71 @@
     if (f.kind === "signals") {
       const s = rec.summary || {};
       const n = x.id === "INJ_VISIBLE" ? s.injection_visible : s.injection_hidden;
-      return n >= f.count && f.count > 0 ? { text: "偽の命令の疑いとして " + fmt(n) + " 件、見つかりました（AIには伏せて渡し、判定には使っていません）。", go: () => $("warning").scrollIntoView({ block: "center" }), goLabel: "警告を見る" } : null;
+      return n >= f.count && f.count > 0 ? { text: "プロンプトインジェクションの疑いとして " + fmt(n) + " 件、見つかりました（AIには伏せて渡し、判定には使っていません）。", go: () => $("warning").scrollIntoView({ block: "center" }), goLabel: "警告を見る" } : null;
     }
     return null;
+  }
+
+  // ---- 要件一覧（要項から取り出した要件を、種別・引用・出典つきで並べる。画面に来た記録だけで組む＝サーバーにも Reader にも手を入れない）----
+  // 一括コピー（Markdown）は、架空の例（②③）だけ。実在の主催者の要項（①）は画面で見せるだけで、コピーのボタンは出さない。
+  function reqItem(x) {
+    const r = x.r;
+    const head = el("div", { cls: "rq-head" }, [
+      el("span", { cls: "rq-id", text: r.req_id }),
+      el("span", { cls: "rq-kind", text: KIND_JA[r.kind] || r.kind }),
+    ]);
+    const quote = el("p", { cls: "rq-quote" + (r.span ? "" : " quote-none"), text: r.span ? "「" + clip(r.span.original_span, 80) + "」" : "（要項に引用できない推測）" + (r.gist ? " " + r.gist : "") });
+    const kids = [head, quote];
+    if (r.span) kids.push(el("p", { cls: "rq-src", text: "出典: " + r.span.doc_id + " " + (x.doc ? x.doc.label : "") }));
+    return el("li", { cls: "rq" }, kids);
+  }
+
+  function renderReqList(rec, rows) {
+    const band = $("reqlist-band");
+    if (!rows.length) { band.hidden = true; return; }
+    const p = state.presets[rec.preset_id] || {};
+    const saved = !state.live;
+    const canCopy = p.fictional === true;
+    $("reqlist-summary").textContent = "要件一覧（" + fmt(rows.length) + "件）";
+    $("reqlist-lead").textContent = "判定のほかに、要項から取り出した要件の一覧も、根拠の一文つきで見られます。" + (canCopy ? "Markdown でコピーできます。" : "");
+    const note = $("reqlist-note");
+    note.textContent = saved ? "保存済みの実行のため、最大40件・引用は80字までです。" : "";
+    note.hidden = !saved;
+    $("reqlist-actions").hidden = !canCopy;
+    $("reqlist-copy-status").textContent = "";
+    const ol = $("reqlist");
+    clear(ol);
+    for (const x of rows) ol.appendChild(reqItem(x));
+    band.open = false; // 最初は閉じる（判定を先に見せる）
+    band.hidden = false;
+  }
+
+  function mdCell(s) { return String(s || "").replace(/\s+/g, " ").replace(/\|/g, "\\|"); }
+
+  function reqMarkdown(rec, rows, saved) {
+    const p = state.presets[rec.preset_id] || {};
+    const lines = ["# 要件一覧（" + rows.length + "件）", ""];
+    if (p.label) lines.push("対象: " + p.label, "");
+    if (saved) lines.push("保存済みの実行のため、最大40件・引用は80字までです。", "");
+    lines.push("| # | 種別 | 要件（要項の引用） | 出典 |", "|---|---|---|---|");
+    for (const x of rows) {
+      const r = x.r;
+      const q = r.span ? "「" + r.span.original_span + "」" : "（要項に引用できない推測）" + (r.gist ? " " + r.gist : "");
+      lines.push("| " + [r.req_id, KIND_JA[r.kind] || r.kind, q, r.span ? r.span.doc_id + " " + (x.doc ? x.doc.label : "") : ""].map(mdCell).join(" | ") + " |");
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  async function copyReqList() {
+    const st = $("reqlist-copy-status");
+    const v = state.view;
+    try {
+      if (!v || !navigator.clipboard) throw new Error("clipboard");
+      await navigator.clipboard.writeText(reqMarkdown(v.rec, v.rows, !state.live));
+      st.textContent = "コピーしました。";
+    } catch (e) {
+      st.textContent = "コピーできませんでした。";
+    }
   }
 
   function renderPlanted(rec, rows) {
@@ -688,16 +838,16 @@
     $("trust-who").textContent = "判定はすべて、コードが出しました。AIの役目は、要項を読むことと、次に調べる所を選ぶことだけです。";
     const all = s.quotes_verbatim === s.quotes_checked ? fmt(s.quotes_checked) + " 件すべて" : fmt(s.quotes_checked) + " 件のうち " + fmt(s.quotes_verbatim) + " 件";
     const q = $("trust-quote");
-    q.textContent = "AIの引用は、コードが要項と照合しました。" + all + "が要項と一致しました" + (requoted ? "（" + fmt(requoted) + " 件は、一度受け付けず、引き直させました）" : "") + "。";
+    q.textContent = "AIの引用は、コードが要項と照合しました。" + all + "が要項と一致しました" + (requoted ? "（" + fmt(requoted) + " 件は、一度受け付けず、引用し直させました）" : "") + "。";
     q.hidden = false;
     const flow = $("trust-flow");
     clear(flow);
     const ex = examples[0];
     if (ex && ex.result === "requoted" && ex.original) {
       const step = (k, t, cls) => el("li", { cls: cls || "" }, [el("span", { cls: "k", text: k }), el("span", { cls: "t", text: t })]);
-      flow.appendChild(step("AIが引いた文", "「" + clip(ex.model, 54) + "」", "f-ng"));
+      flow.appendChild(step("AIが引用した文", "「" + clip(ex.model, 54) + "」", "f-ng"));
       flow.appendChild(step("コードの照合", "受け付けず（" + ex.reason + "）"));
-      flow.appendChild(step("引き直し", "「" + clip(ex.original, 54) + "」"));
+      flow.appendChild(step("引用し直し", "「" + clip(ex.original, 54) + "」"));
       flow.appendChild(step("結果", "要項と一字一句一致（コードが確認）", "f-ok"));
       $("trust-example").hidden = false;
     }
@@ -770,6 +920,8 @@
     readJudgeCode();
     $("run").addEventListener("click", run);
     $("source-close").addEventListener("click", () => { $("source").hidden = true; });
+    $("reqlist-copy").addEventListener("click", copyReqList);
+    $("repo-url").addEventListener("input", syncRun);
     loadStatus();
   });
 })();

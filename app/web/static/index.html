@@ -26,9 +26,14 @@
       <h3 id="h-detail" class="detail-head">この対象の中身を読む</h3>
       <ul id="detail-links" class="links" aria-labelledby="h-detail"></ul>
       <details id="detail-planted" class="more-box" hidden>
-        <summary>仕込んだ欠陥・偽の命令を見る</summary>
+        <summary>仕込んだ欠陥・プロンプトインジェクションを見る</summary>
         <ol id="planted-list" class="planted"></ol>
       </details>
+    </div>
+    <div id="repo-input" class="repo-input" hidden>
+      <label for="repo-url" class="repo-label">GitHub の公開リポジトリ</label>
+      <input id="repo-url" class="repo-field" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200" placeholder="持ち主/リポジトリ名">
+      <p class="sub">github.com/ のあとの「持ち主/リポジトリ名」を入れます。URL をそのまま貼ってもかまいません。</p>
     </div>
     <div class="actions">
       <button id="run" type="button" class="primary" disabled>監査を実行</button>
@@ -49,6 +54,12 @@
       <ul id="summary" class="stats"></ul>
     </section>
 
+    <section id="repo-section" class="list" aria-labelledby="h-repo" hidden>
+      <h3 id="h-repo" class="list-title">基本点検の3項目</h3>
+      <ol id="repo-items" class="repo-items"></ol>
+      <ul id="repo-fetched" class="repo-fetched"></ul>
+    </section>
+
     <div id="contradictions" class="contra" hidden></div>
 
     <section id="list-section" class="list" aria-labelledby="h-list" hidden>
@@ -56,6 +67,19 @@
       <p id="list-status" class="sr-only" role="status" aria-live="polite"></p>
       <div id="reqs" class="groups"></div>
     </section>
+
+    <details id="reqlist-band" class="box" hidden>
+      <summary id="reqlist-summary">要件一覧</summary>
+      <div class="inner">
+        <p id="reqlist-lead" class="sub"></p>
+        <p id="reqlist-note" class="sub" hidden></p>
+        <div id="reqlist-actions" class="reqlist-actions" hidden>
+          <button id="reqlist-copy" type="button" class="btn">Markdown でコピー</button>
+          <span id="reqlist-copy-status" class="sub" role="status" aria-live="polite"></span>
+        </div>
+        <ol id="reqlist" class="reqlist"></ol>
+      </div>
+    </details>
 
     <details id="planted-band" class="box" hidden>
       <summary>仕込んだ欠陥と、見つけた結果</summary>

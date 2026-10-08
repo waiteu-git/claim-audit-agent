@@ -88,9 +88,19 @@ def test_no_inline_script_style_or_event_handler_in_the_page():
     assert links == [{"rel": "stylesheet", "href": "/app.css"}]
 
 
-def test_there_is_no_input_field_only_preset_cards_and_one_run_button():
+def test_the_only_input_field_is_the_github_repo_one_and_the_rest_is_preset_cards_and_one_run_button():
+    """入力欄は、審査員コード用の GitHub のリポジトリ欄（`repo-url`）の1つだけ。最初は隠れていて、そのカードを選んだ時だけ出る。
+    textarea・select・form は無い。値の使い道は `repoUrl()` だけ（保存・URL・表示に出さない）で、POST の本文にだけ入れる。"""
     p = _parsed()
-    assert not any(t in ("input", "textarea", "select", "form") for t, _ in p.tags)
+    inputs = [a for t, a in p.tags if t == "input"]
+    assert len(inputs) == 1 and inputs[0]["id"] == "repo-url" and inputs[0]["type"] == "text"
+    assert not any(t in ("textarea", "select", "form") for t, _ in p.tags)
+    assert re.search(r'<div id="repo-input"[^>]*\bhidden\b', HTML)
+    assert JS.count('$("repo-url").value') == 1 and "body.repo_url = url" in JS
+    for bad in ("localStorage", "sessionStorage", "document.cookie", "sendBeacon", "history.pushState"):
+        assert bad not in JS, bad
+    cards = JS.split("function renderPresets")[1].split("function select")[0]
+    assert "p.id === GITHUB_PRESET && !state.judge" in cards  # 審査員コードが無い時は、GitHub のカードを出さない
     assert ("button", {"id": "run", "type": "button", "class": "primary", "disabled": None}) in p.tags
     assert ">監査を実行<" in HTML
 
@@ -189,7 +199,8 @@ def test_the_result_has_a_quote_band_and_a_replan_band_that_start_hidden():
 
 def test_the_quote_band_summary_and_examples_follow_the_agreed_wording_and_limits():
     assert "AIの引用は、コードが要項と照合しました。" in JS
-    assert "一度受け付けず、引き直させました" in JS  # 「棄却」でなく「受け付けず」（本人の裁定 S09 B）
+    assert "一度受け付けず、引用し直させました" in JS  # 「棄却」でなく「受け付けず」（本人の裁定 S09 B）。「引き直し」でなく「引用し直し」（10/8 夜）
+    assert "引き直" not in JS and "AIが引いた" not in JS and 'step("AIが引用した文"' in JS
     assert "examples.length < 1" in JS  # 照合の例は1つだけ（成功の流れ。赤い✕の並びにしない）
     assert JS.count("clip(ex.model, 54)") == 1 and JS.count("clip(ex.original, 54)") == 1  # 例の引用は短く切る
     assert "clip(r.span.original_span, 80)" in JS  # 要件の引用は80字まで
@@ -288,8 +299,49 @@ def test_the_result_shows_few_things_at_once_groups_are_closed_except_the_things
 def test_the_headline_numbers_open_their_group_and_the_names_follow_the_ruling():
     block = JS.split("function renderHero")[1].split("function renderWarning")[0]
     assert 'openGroup(tone, true)' in block and '"ご自身で確認"' in block and '"通過"' in block
-    assert "ほかに" not in JS  # 補足の行は置かない（件数は組の見出しに出る）
+    assert "ほかに " not in JS and '"ほかに' not in JS  # 補足の行（「ほかに N 件」）は置かない（件数は組の見出しに出る）。要件一覧の説明文の「判定のほかに、…」は別
     assert "受け付けず" in JS  # 「棄却」でなく「受け付けず」
+
+
+def test_the_zero_fix_headline_does_not_repeat_the_zero_count_and_the_attack_is_called_by_its_common_name():
+    """本人の指摘: 直す点が0の時、見出し「直す点は見つかりませんでした」と数の「直す点 0」は同じことの繰り返し。
+    見出しは「確かめた範囲では、問題なく通過しました。」（確かめていない項目まで通ったとは言わない）。
+    「偽の命令」は分かりにくいので、画面・説明では「プロンプトインジェクション」と呼ぶ。"""
+    block = JS.split("function renderHero")[1].split("function renderWarning")[0]
+    assert '"確かめた範囲では、問題なく通過しました。"' in block
+    assert "直す点は見つかりませんでした" not in JS
+    for name, text in UI_FILES.items():
+        assert "偽の命令" not in text, name
+    assert "プロンプトインジェクション" in JS and "プロンプトインジェクション" in HTML
+
+
+def test_the_requirement_list_is_a_closed_band_built_from_the_record_and_copying_is_only_for_the_fictional_examples():
+    """本人の裁定（10/8 夜）: 結果に「要件一覧（N件）」の開閉の帯を足す（最初は閉じる・サーバーと Reader は触らない）。
+    保存済みの実行では「最大40件・引用は80字まで」を必ず出す。Markdown の一括コピーは架空の例（②③）だけ（実在の主催者の要項の①には出さない）。"""
+    assert re.search(r'<details id="reqlist-band"[^>]*\bhidden\b', HTML) and 'id="reqlist-summary"' in HTML and 'id="reqlist-copy"' in HTML
+    assert re.search(r'<div id="reqlist-actions"[^>]*\bhidden\b', HTML)  # コピーのボタンの置き場は、既定で隠れている
+    block = JS.split("function renderReqList")[1].split("function mdCell")[0]
+    assert '"要件一覧（" + fmt(rows.length) + "件）"' in block and "要項の要件一覧" not in JS  # 見出しに「要項の」は付けない
+    assert "保存済みの実行のため、最大40件・引用は80字までです。" in block and "!state.live" in block
+    assert "p.fictional === true" in block and "$(\"reqlist-actions\").hidden = !canCopy" in block  # コピーは架空の例だけ
+    assert "band.open = false" in block  # 最初は閉じる
+    assert "navigator.clipboard" in JS and "コピーできませんでした" in JS  # 失敗した時は、できなかったと言う
+    assert '"reqlist-band"' in JS.split("function resetResult")[1].split("function onMode")[0]  # 新しい実行では帯を隠す
+
+
+def test_the_github_result_is_drawn_from_fixed_sentences_labels_and_counts_only_and_the_run_box_comes_back():
+    """GitHub の基本点検の結果（kind=repo_audit）は、固定文・ラベル・件数・取得の状態だけを描く。要項の要件・引用・一覧の部品は使わない。
+    押せない数（クリックで一覧を開く先が無い）。実行の記録が無いので隠し、次の実行で戻す。エラーの固定文は、コードから引く。"""
+    assert 'rec.kind === "repo_audit"' in JS.split("function renderResult")[1].split("function renderHero")[0]
+    block = JS.split("function renderRepoAudit")[1].split("function renderWarning")[0]
+    assert "it.title_ja" in block and "it.reason_ja" in block and "renderHero(rec, rows, true)" in block
+    for gone in ("original_span", "quote", "rec.requirements", "rec.verdicts", "readme", "README の中身"):
+        assert gone not in block, gone
+    assert "AIは使っていません" in block and "AIには渡していません" in block
+    assert '$("run-box").hidden = true' in block and '$("run-box").hidden = false' in JS.split("function resetResult")[1].split("function onMode")[0]
+    for code in ("JUDGE_REQUIRED", "INVALID_INPUT", "QUOTA"):
+        assert code + ":" in JS.split("const ERROR_JA")[1].split("};")[0], code
+    assert "async function errorCode" in JS and "ERROR_JA[code]" in JS
 
 
 def test_a_saved_run_does_not_draw_the_time_gauge_because_its_cap_may_differ_from_todays():
