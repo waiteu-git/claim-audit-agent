@@ -3312,8 +3312,8 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R1"
   },
   {
@@ -3325,7 +3325,7 @@
     }
    ],
    "label": "不適合",
-   "reason": "提出物の本文は1,130字（空白を除くと1,123字）で、要項の上限800字を超えています。",
+   "reason": "提出物のページの文字は1,130字（空白を除くと1,123字）で、要項の上限800字を超えています。",
    "reason_code": null,
    "req_id": "R2"
   },
@@ -3345,28 +3345,28 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R4"
   },
   {
    "evidence": [
     {
      "event_seq": 49,
-     "label": "求められた語が本文にある（自己申告）",
+     "label": "求められた語が提出物のページにある（自己申告）",
      "obs_id": "O7"
     }
    ],
    "label": "推定適合",
-   "reason": "提出物の本文に求められた語が見つかりました。語が在ることの証明であり、内容の保証ではありません。",
+   "reason": "提出物のページに求められた語が見つかりました。語が在ることの証明であり、内容の保証ではありません。",
    "reason_code": null,
    "req_id": "R5"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R6"
   },
   {
@@ -3378,28 +3378,28 @@
     }
    ],
    "label": "不適合",
-   "reason": "提出物の本文に、公開してはいけない文字列が含まれています。",
+   "reason": "提出物のページに、公開してはいけない文字列が含まれています。",
    "reason_code": null,
    "req_id": "R7"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R8"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R9"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
+   "reason": "この道具では検査していません。要項を読んで、ご自身で確認してください。",
    "reason_code": "OUT_OF_SCOPE",
    "req_id": "R10"
   }

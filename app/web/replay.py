@@ -9,6 +9,7 @@
   python -m app.web.replay --write            # ②③の記録を作り直す（決定論: run_id・時刻・時計を固定）
   python -m app.web.replay --check            # 同梱の記録が生成物と一致するか（tests も確かめる）
   python -m app.web.replay --import rec.json --preset lp_self   # 実行記録を REPLAY として取り込む
+  python -m app.web.replay --rejudge          # 同梱の全記録の判定を、記録の要件・観測から今のコードで再判定して書き直す（オフライン。実モデルは呼ばない）
 """
 import argparse
 import asyncio
@@ -18,11 +19,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.adjudicate import adjudicate
 from app.agent.planner import InspectMode
 from app.agent.run import run_audit
 from app.checks.leak_scan import scan_text
 from app.config import PRESET_IDS, PRESET_SAMPLE_DEFECT, PRESET_SAMPLE_INJECTION, PRESETS, Settings
-from app.contracts import RunMode, RunRecord, serialize_report
+from app.contracts import AdjudicationInput, RunMode, RunRecord, serialize_report
 from app.fixtures.eval import OracleReader, RulePlanner
 from app.fixtures.site import FixtureFetch, FixtureSite
 from app.quotes.replay import restore_saved_record
@@ -198,12 +200,25 @@ def check(root: Path = REPLAY_DIR) -> list[str]:
     return diff
 
 
+def rejudge(record: RunRecord) -> RunRecord:
+    """記録の要件・文書・観測から、判定（理由文・根拠チップ）を今の判定表で作り直す。ラベルと件数は変わらない（変わるなら例外）。
+
+    記録は印（UnverifiableMark）を持たないので、印のある実行の記録には使えない（同梱の記録には印を要する実行が無い）。
+    """
+    new = adjudicate(AdjudicationInput(requirements=record.requirements, docs=record.docs, observations=record.observations))
+    before = {v.req_id: v.label for v in record.verdicts}
+    if {v.req_id: v.label for v in new} != before:
+        raise ValueError("再判定でラベルが変わりました。記録の入力が足りない（印など）可能性があります")
+    return record.model_copy(update={"verdicts": new})
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.web.replay")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--write", action="store_true")
     g.add_argument("--check", action="store_true")
     g.add_argument("--import", dest="import_path", type=Path)
+    g.add_argument("--rejudge", action="store_true")
     ap.add_argument("--preset", choices=PRESET_IDS)
     a = ap.parse_args(argv)
     if a.check:
@@ -211,6 +226,17 @@ def main(argv: list[str] | None = None) -> int:
         for d in diff:
             print(f"差分: {d}")
         return 1 if diff else 0
+    if a.rejudge:
+        for pid in PRESET_IDS:
+            p = REPLAY_DIR / f"{pid}.json"
+            if not p.is_file():
+                continue
+            text = bundle_text(rejudge(load_bundle(p).record))
+            if leak_findings(text):
+                print(f"{pid}: 記録に公開してはいけない文字列があります", file=sys.stderr)
+                return 1
+            p.write_text(text, encoding="utf-8")
+        return 0
     if a.write:
         REPLAY_DIR.mkdir(parents=True, exist_ok=True)
         for pid in FIXTURE_REPLAYS:

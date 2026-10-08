@@ -48,7 +48,7 @@ def report_html(record: RunRecord) -> str:
         f"引用検証 {s.quotes_checked} 件中 {s.quotes_verbatim} 件が逐語一致・{s.demoted_to_speculative} 件を推測へ降格。</p>",
         f"<p>判定: {escape(counts)} ／ 矛盾 {s.contradictions} 件 ／ 注入疑い 可視 {s.injection_visible}・隠し {s.injection_hidden}"
         f" ／ Governor の拒否 {s.denied} 件</p>",
-        '<table border="1"><thead><tr><th>ID</th><th>種別</th><th>要件（原文の引用）</th><th>出典</th><th>判定</th><th>理由</th><th>証拠</th></tr></thead><tbody>',
+        '<table border="1"><thead><tr><th>ID</th><th>種別</th><th>要件（要項の引用）</th><th>出典</th><th>判定</th><th>理由</th><th>証拠</th></tr></thead><tbody>',
     ]
     rows = []
     for r in record.requirements:
@@ -59,7 +59,7 @@ def report_html(record: RunRecord) -> str:
             if not r.reverified:
                 quote += "（再検証前）"
         else:
-            quote = f"（原文に引用できない推測）{escape(r.gist)}" if r.gist else "（原文に引用できない推測）"
+            quote = f"（要項に引用できない推測）{escape(r.gist)}" if r.gist else "（要項に引用できない推測）"
             source = "—"
         kind = escape(r.kind.value) + "".join(f"［{escape(CHIP_LABEL_JA[c])}］" for c in r.chips)
         if r.declared_kind is not r.kind:
