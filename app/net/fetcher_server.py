@@ -5,6 +5,10 @@
   GET  /health  {"ok": true}
 それ以外のパスは 404。
 
+要項モード（第11弾）: SPEC_FETCH_ENABLED=1 の時だけ、許可リストの外の公開ページを1ページずつ取る規則（contracts.OpenPageScope）を
+SafeFetch に足す。S3 は実行の区切りを見られないので、「1実行1ページ」は S2 が守り、S3 はこの規則で通りうる要求（許可リストにも
+GitHub の固定ファイルにも当たらない要求）の数と本文の量を、RepoRelayLimiter と同じ形の窓で数えて頭打ちにする（超えたら 429）。
+
 認証: Authorization: Bearer <ID token> を verify_token（注入できる）で確かめる。Cloud Run は --no-allow-unauthenticated で
 プラットフォームが ID token の署名と呼び出し元（roles/run.invoker）を検証してから中へ通すので、既定の verify_token は
 「Bearer が付いていること」だけを見る（署名の再検証は未実装＝PR の既知の弱点）。テストは拒否する関数を注入して 401 を確かめる。
@@ -19,7 +23,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from app.config import FETCH_LIMITS, FetchLimits, Settings
-from app.contracts import GITHUB_RAW_HOST, FetchPort, FetchRequest, RepoRawScope
+from app.contracts import GITHUB_RAW_HOST, FetchPort, FetchRequest, OpenPageScope, RepoRawScope
 from app.jsonlog import log_event, log_exception
 
 MAX_FETCH_REQUEST_BYTES = 8 * 1024
@@ -39,9 +43,17 @@ class RepoRelayLimiter:
     限界: インスタンスを増やせば窓も増える（上限は max-instances × この値）。呼び出し元ごとの区別はしない。
     """
 
-    def __init__(self, limits: FetchLimits, *, window_s: float = 60.0, clock: Callable[[], float] = time.monotonic) -> None:
-        self._max_requests = limits.repo_relay_requests_per_min
-        self._max_bytes = limits.repo_relay_bytes_per_min
+    def __init__(
+        self,
+        limits: FetchLimits,
+        *,
+        window_s: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+        max_requests: int | None = None,
+        max_bytes: int | None = None,
+    ) -> None:
+        self._max_requests = limits.repo_relay_requests_per_min if max_requests is None else max_requests
+        self._max_bytes = limits.repo_relay_bytes_per_min if max_bytes is None else max_bytes
         self._window_s = window_s
         self._clock = clock
         self._start = clock()
@@ -64,6 +76,21 @@ class RepoRelayLimiter:
         self._bytes += n
 
 
+def spec_relay_limiter(limits: FetchLimits, *, clock: Callable[[], float] = time.monotonic) -> RepoRelayLimiter:
+    """要項モードの公開ページの取りすぎ止め（RepoRelayLimiter と同じ形。数と量は spec_relay_*）。"""
+    return RepoRelayLimiter(limits, clock=clock, max_requests=limits.spec_relay_requests_per_min, max_bytes=limits.spec_relay_bytes_per_min)
+
+
+def _outside_allow_list(url: str, prefixes) -> bool:  # noqa: ANN001
+    """許可リストの外か（形が URL として通らないものも外として数える＝数え過ぎの側）。"""
+    from app.net.urlcheck import UrlRejected, in_scope, validate_url
+
+    try:
+        return not in_scope(validate_url(url), prefixes)
+    except UrlRejected:
+        return True
+
+
 def _is_github_raw(url: str) -> bool:
     try:
         return (urlsplit(url).hostname or "").lower() == GITHUB_RAW_HOST
@@ -83,10 +110,15 @@ def create_fetcher_app(
         from app.net.safefetch import SafeFetch
 
         # 空なら何も取れない（fail-closed）。GITHUB_RAW_ENABLED=1 の時だけ、公開リポジトリの固定ファイルの規則を足す（既定は無効）
-        fetch = SafeFetch(settings.allowed_prefixes, repo_raw=RepoRawScope() if settings.github_raw_enabled else None)
+        fetch = SafeFetch(
+            settings.allowed_prefixes,
+            repo_raw=RepoRawScope() if settings.github_raw_enabled else None,
+            open_page=OpenPageScope() if settings.spec_fetch_enabled else None,  # 既定は無効（SPEC_FETCH_ENABLED=1 の時だけ）
+        )
     app = FastAPI(title="claim-audit-fetcher", docs_url=None, redoc_url=None, openapi_url=None)
     port: FetchPort = fetch
     relay = RepoRelayLimiter(limits, clock=clock) if settings.github_raw_enabled else None  # 無効なら従来どおり（数えない）
+    spec_relay = spec_relay_limiter(limits, clock=clock) if settings.spec_fetch_enabled else None
 
     @app.get("/health")
     async def health() -> dict:
@@ -111,6 +143,12 @@ def create_fetcher_app(
         if counted and not relay.admit():
             log_event("fetcher.repo_relay_limited", severity="WARNING")
             return JSONResponse({"ok": False, "code": "RETRYABLE"}, status_code=429)
+        spec_counted = (
+            spec_relay is not None and not _is_github_raw(req.url) and _outside_allow_list(req.url, settings.allowed_prefixes)
+        )
+        if spec_counted and not spec_relay.admit():
+            log_event("fetcher.spec_relay_limited", severity="WARNING")
+            return JSONResponse({"ok": False, "code": "RETRYABLE"}, status_code=429)
         try:
             result = await port.fetch(req)
         except Exception as e:  # noqa: BLE001  SafeFetch は例外を出さない設計。万一の時も中身は出さない
@@ -118,6 +156,8 @@ def create_fetcher_app(
             return JSONResponse({"ok": False, "code": "INTERNAL"}, status_code=500)
         if counted:
             relay.add_bytes(len(result.body))
+        if spec_counted:
+            spec_relay.add_bytes(len(result.body))
         log_event("fetcher.fetched", outcome=result.outcome.value, mode=req.mode.value, bytes=len(result.body))
         return Response(result.model_dump_json(), media_type="application/json")
 

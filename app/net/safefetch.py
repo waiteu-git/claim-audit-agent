@@ -18,6 +18,12 @@ GitHub 公開リポジトリの固定ファイル（第7弾の土台。contracts
   規則の評価は validate_url の正規化の**後**（クエリ・断片が付いたもの、パスが `..` などで形を変えたものは通さない）。
   転送先（ホップ1以降）に規則は使わない＝転送は許可リストの範囲だけを追う（規則は入口の要求だけ）。
 
+要項モードの公開ページ（第11弾。contracts.OpenPageScope。S3 の設定 SPEC_FETCH_ENABLED で有効にした時だけ）:
+  最初の要求（ホップ0）が、許可リストに合わず、正規の形（validate_url の正規化の結果と文字列が一致・断片無し・mode=page）の時だけ通す。
+  通った要求には固定ファイルと同じ厳しい扱いを掛ける（転送は追わず 3xx をそのまま返す・200 の本文だけ・text/html と text/plain だけ・
+  本文は spec_max_page_bytes まで（超えたら打切りでなく拒否）・NUL を含む本文は拒否）。名前解決後の私的・予約済みアドレスの拒否は
+  ほかの取得と同じ GuardedResolver を通る。
+
 G3 に回したもの: fetcher（S3）へのクライアント実装。この SafeFetch は S1 のプロセス内用で、S3 側のサーバーも同じものを使う。
 """
 import asyncio
@@ -43,6 +49,7 @@ from app.contracts import (
     FetchOutcome,
     FetchRequest,
     FetchResult,
+    OpenPageScope,
     PolicyId,
     RedirectHop,
     RepoRawScope,
@@ -88,6 +95,16 @@ def classify_content_type(value: str | None) -> ContentKind:
     if media in ("application/json", "text/json") or (media.startswith("application/") and media.endswith("+json")):
         return ContentKind.JSON
     return ContentKind.UNSUPPORTED
+
+
+@dataclass(frozen=True)
+class _StrictRule:
+    """許可リストの外を、決まった形の要求だけ通す規則（固定ファイル・要項モードの公開ページ）に掛ける厳しい扱い。"""
+
+    name: str  # notes の接頭辞（"repo_raw" / "open_page"）
+    kinds: frozenset[ContentKind]  # 受ける Content-Type の種別
+    max_bytes: int  # 本文の上限（打切りでなく拒否）
+    size_note: str
 
 
 @dataclass(frozen=True)
@@ -210,9 +227,15 @@ class SafeFetch:
         network_backend: httpcore.AsyncNetworkBackend | None = None,
         ssl_context: ssl.SSLContext | None = None,
         repo_raw: RepoRawScope | None = None,
+        open_page: OpenPageScope | None = None,
     ) -> None:
         self._prefixes = tuple(allowed_prefixes)  # 空なら何も取れない（fail-closed）
         self._repo_raw = repo_raw  # None（既定）なら GitHub の固定ファイル取得の規則は働かない
+        self._open_page = open_page  # None（既定）なら要項モードの公開ページの規則は働かない
+        self._repo_rule = _StrictRule("repo_raw", frozenset({ContentKind.PLAIN}), limits.repo_max_file_bytes, "size.repo_file")
+        self._page_rule = _StrictRule(
+            "open_page", frozenset({ContentKind.HTML, ContentKind.PLAIN}), min(limits.spec_max_page_bytes, limits.max_decoded_bytes), "size.spec_page"
+        )
         self._limits = limits
         self._guard = GuardedResolver(resolver or system_resolver, timeout_s=limits.connect_timeout_s)
         self._inner = network_backend or httpcore.AnyIOBackend()
@@ -258,7 +281,7 @@ class SafeFetch:
         )
         try:
             try:
-                cur, strict = await self._admit(request.url, pins, initial=True)
+                cur, strict = await self._admit(request.url, pins, initial=True, mode=request.mode)
             except _Denied as d:
                 run.notes.append(f"block:{d.note}")
                 log_event("safefetch.blocked", severity="WARNING", policy=d.policy.value, reason=d.note, hop=0)
@@ -284,7 +307,7 @@ class SafeFetch:
                             blocked_policy=PolicyId.SCOPE,
                         )
                     )
-                    run.notes.append("repo_raw:no_redirect")
+                    run.notes.append(f"{strict.name}:no_redirect")
                     return self._result(run, reply)
                 if reply.outcome is not FetchOutcome.OK or reply.status not in REDIRECT_STATUSES:
                     return self._result(run, reply)
@@ -357,20 +380,37 @@ class SafeFetch:
             return False
         return f"/{raw_path}" == normalized.path and scope.matches(normalized.host, normalized.path)
 
+    def _open_page_match(self, url: str, normalized: NormalizedUrl, mode: FetchMode) -> bool:
+        """要項モードの公開ページの規則に合うか（規則が無効なら常に False）。許可リストに合う URL には使わない（従来の扱いのまま）。
+
+        受け取った文字列が正規化の結果と一致すること（大文字・末尾ドット・明示の :443・`..`・断片などで形を変えたものは通さない）と、
+        本文を読む取得（mode=page）であることを求める。S2 は検証済みの正規形だけを送る。
+        """
+        scope = self._open_page
+        if scope is None or mode is not FetchMode.PAGE or "#" in url or url != normalized.url:
+            return False
+        if in_scope(normalized, self._prefixes):
+            return False
+        return scope.matches(normalized.host, normalized.path)
+
     async def _admit(
-        self, url: str, pins: dict[str, tuple[str, ...]], *, initial: bool = False
-    ) -> tuple[NormalizedUrl, bool]:
+        self, url: str, pins: dict[str, tuple[str, ...]], *, initial: bool = False, mode: FetchMode = FetchMode.PAGE
+    ) -> tuple[NormalizedUrl, "_StrictRule | None"]:
         """URL 検証 → スコープ → 名前解決＋IP 検査。通ったら pins に検査済み IP を入れる。
 
-        戻りの bool は「固定ファイルの規則で通した（厳しい扱いを掛ける）」か。規則は最初の要求（initial）にだけ使い、
-        許可リストにも合う場合は規則の側（厳しい方）を優先する。
+        戻りの規則は「固定ファイル・公開ページの規則で通した（厳しい扱いを掛ける）」か（None なら許可リストで通した）。規則は最初の
+        要求（initial）にだけ使う。固定ファイルの規則は、許可リストにも合う場合も規則の側（厳しい方）を優先する。
         """
         try:
             normalized = validate_url(url, max_length=self._limits.max_url_length)
         except UrlRejected as e:
             raise _Denied(PolicyId.SCOPE, e.code.value, scope_ok=False) from e
-        strict = initial and self._repo_raw_match(url, normalized)
-        if not strict and not in_scope(normalized, self._prefixes):
+        strict: _StrictRule | None = None
+        if initial and self._repo_raw_match(url, normalized):
+            strict = self._repo_rule
+        elif initial and self._open_page_match(url, normalized, mode):
+            strict = self._page_rule
+        if strict is None and not in_scope(normalized, self._prefixes):
             raise _Denied(PolicyId.SCOPE, UrlReject.SCOPE_OUT.value, scope_ok=False)
         try:
             pins[normalized.host] = await self._guard.resolve(normalized.host)
@@ -397,7 +437,7 @@ class SafeFetch:
             raise _Denied(PolicyId.SCOPE, _REDIRECT_BAD_LOCATION, scope_ok=False) from e
 
     async def _exchange(
-        self, pool: httpcore.AsyncConnectionPool, cur: NormalizedUrl, mode: FetchMode, meter: WireMeter, *, strict: bool = False
+        self, pool: httpcore.AsyncConnectionPool, cur: NormalizedUrl, mode: FetchMode, meter: WireMeter, *, strict: "_StrictRule | None" = None
     ) -> _Reply:
         limits = self._limits
         headers = [
@@ -437,7 +477,7 @@ class SafeFetch:
                 reply.outcome, reply.content_kind, reply.note = FetchOutcome.UNSUPPORTED_TYPE, ContentKind.UNSUPPORTED, "type.conflict"
                 return reply
             kind = classify_content_type(ctype.decode("latin-1") if ctype is not None else None)
-            if kind is ContentKind.UNSUPPORTED or (strict and kind is not ContentKind.PLAIN):  # 固定ファイルは text/plain だけ
+            if kind is ContentKind.UNSUPPORTED or (strict and kind not in strict.kinds):  # 固定ファイルは text/plain だけ・公開ページは html と plain だけ
                 reply.outcome, reply.content_kind, reply.note = FetchOutcome.UNSUPPORTED_TYPE, kind, "type.unsupported"
                 return reply
             try:
@@ -446,8 +486,8 @@ class SafeFetch:
             except UnsupportedEncoding as e:
                 reply.outcome, reply.content_kind, reply.note = FetchOutcome.UNSUPPORTED_TYPE, kind, str(e)
                 return reply
-            if strict and content_length is not None and content_length > limits.repo_max_file_bytes:
-                reply.outcome, reply.limit_hit, reply.note = FetchOutcome.TOO_LARGE, FetchLimit.CONTENT_LENGTH, "size.repo_file"
+            if strict and content_length is not None and content_length > strict.max_bytes:
+                reply.outcome, reply.limit_hit, reply.note = FetchOutcome.TOO_LARGE, FetchLimit.CONTENT_LENGTH, strict.size_note
                 return reply  # 読む前に拒否
             if mode is FetchMode.PAGE and content_length is not None and content_length > limits.max_content_length:
                 reply.outcome, reply.limit_hit, reply.note = FetchOutcome.TOO_LARGE, FetchLimit.CONTENT_LENGTH, "size.content_length"
@@ -459,7 +499,7 @@ class SafeFetch:
                 cap, cap_limit = min(limits.max_decoded_bytes, FETCH_BODY_MAX_BYTES), FetchLimit.DECODED_SIZE
             raw_limit = limits.max_content_length
             if strict:  # 固定ファイルは 1ファイルの上限まで（圧縮の分の余裕だけ見込む）。打切りでなく拒否
-                cap, raw_limit = min(cap, limits.repo_max_file_bytes), limits.repo_max_file_bytes + _REPO_RAW_SLACK
+                cap, raw_limit = min(cap, strict.max_bytes), strict.max_bytes + _REPO_RAW_SLACK
             decoder = BodyDecoder(encoding, cap)
             raw_total = 0
             events = 0
@@ -486,7 +526,7 @@ class SafeFetch:
             reply.content_kind = kind
             if strict:
                 if decoder.truncated:
-                    reply.outcome, reply.limit_hit, reply.note = FetchOutcome.TOO_LARGE, FetchLimit.CONTENT_LENGTH, "size.repo_file"
+                    reply.outcome, reply.limit_hit, reply.note = FetchOutcome.TOO_LARGE, FetchLimit.CONTENT_LENGTH, strict.size_note
                     return reply
                 if b"\x00" in decoder.data:  # バイナリ。中身は返さない
                     reply.outcome, reply.note = FetchOutcome.UNSUPPORTED_TYPE, "type.binary"

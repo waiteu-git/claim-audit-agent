@@ -731,6 +731,27 @@ class RepoRawScope(_Frozen):
 
 
 # ---------------------------------------------------------------------------
+# 要項モード（第11弾）: 利用者が入れた公開ページの URL を Reader だけにかける。S3 の別の取得規則
+# ---------------------------------------------------------------------------
+SPEC_URL_PRESET_ID = "spec_url"
+
+
+class OpenPageScope(_Frozen):
+    """S3 の取得規則の1つ: 公開ページを1ページだけ取る（`UrlPrefix`・`RepoRawScope` とは別の型。既定は無効で、S3 の設定
+    SPEC_FETCH_ENABLED で明示的に有効にした時だけ働く）。
+
+    許可リスト（URL 接頭辞）では「任意の公開ホストの1ページ」を表せないので別の型にし、`UrlPrefix.matches` の定義には手を入れない。
+    host の形（IP の直書き・localhost・単一ラベル・.local/.internal 等の拒否）とポート 443 は net.urlcheck.validate_url が、
+    私的・予約済みアドレスの拒否（DNS 解決後）は既存の GuardedResolver が見る。この型が見るのは、正規化の後の host・path が
+    空でないことだけ（形の定義を2か所に持たない）。転送を追わない・GET の page だけ・text/html と text/plain だけ・本文の上限は、
+    SafeFetch がこの規則で通った要求にだけ掛ける。許可リストに合う URL は従来どおり許可リストの扱い（この規則は使わない）。
+    """
+
+    def matches(self, host: str, path: str) -> bool:
+        return bool(host) and "." in host and path.startswith("/")
+
+
+# ---------------------------------------------------------------------------
 # 「リポジトリの基本点検」の結果（第10弾。RunRecord とは別の型。要項の要件には結びつけない）
 # ---------------------------------------------------------------------------
 # 自由文を持てない型: 題名と理由は固定文の列挙型（値が日本語の固定文）、証拠のチップはコードの語彙の形だけ、
@@ -894,6 +915,7 @@ class PresetKind(StrEnum):
     LIVE_LP = "live_lp"  # ① 実在 LP＋自己監査
     FIXTURE_DEFECT = "fixture_defect"  # ② 欠陥入りの架空サンプル
     FIXTURE_INJECTION = "fixture_injection"  # ③ 偽の命令入りの架空サンプル
+    SPEC_URL = "spec_url"  # 要項モード（第11弾。審査員コード用。要件の一覧だけ）
 
 
 class Preset(_Frozen):
@@ -1946,8 +1968,6 @@ class RunRecord(_Frozen):
                 raise ValueError("判定が存在しない要件を指しています")
             if (r.kind is Kind.SPECULATIVE) != (v.label is VerdictLabel.REFERENCE):
                 raise ValueError("参考は推測 kind だけの判定です（推測は必ず参考）")
-        if self.status is not RunStatus.ABORTED and set(verdict_ids) != set(req_by_id):
-            raise ValueError("完了・降格の実行では全要件に判定が要ります（未検査は理由コードつきの確認不能）")
         obs_ids = [o.obs_id for o in self.observations]
         if len(set(obs_ids)) != len(obs_ids):
             raise ValueError("obs_id が重複しています")
@@ -1976,6 +1996,13 @@ class RunRecord(_Frozen):
             last = e.seq
         return self
 
+    @model_validator(mode="after")
+    def _all_verdicts(self) -> "RunRecord":
+        """完了・降格の実行では全要件に判定が要る（要項モードの SpecOnlyRecord はこの検査を「判定を持たない」に差し替える）。"""
+        if self.status is not RunStatus.ABORTED and {v.req_id for v in self.verdicts} != {r.req_id for r in self.requirements}:
+            raise ValueError("完了・降格の実行では全要件に判定が要ります（未検査は理由コードつきの確認不能）")
+        return self
+
     @classmethod
     def restore(cls, data: Mapping[str, Any], *, seal: VerificationSeal) -> "RunRecord":
         d = dict(data)
@@ -1985,6 +2012,25 @@ class RunRecord(_Frozen):
     @classmethod
     def restore_json(cls, text: str | bytes, *, seal: VerificationSeal) -> "RunRecord":
         return cls.restore(json.loads(text), seal=seal)
+
+
+class SpecOnlyRecord(RunRecord):
+    """要項モード（第11弾）の結果: 要件の一覧だけ。判定・観測・矛盾を持たないことを型で表す（kind="spec_only"）。
+
+    RunRecord の欄をそのまま使い（requirements・docs・summary・budget・events）、検査・判定の欄は空でなければ作れない。
+    画面は `kind === "spec_only"` で通常の結果と分ける。判定を書けるのは adjudicate.py だけという規則はそのまま（ここは判定を作らない）。
+    """
+
+    kind: Literal["spec_only"] = "spec_only"
+    preset_id: Literal["spec_url"] = SPEC_URL_PRESET_ID
+
+    @model_validator(mode="after")
+    def _all_verdicts(self) -> "SpecOnlyRecord":  # RunRecord の同名の検査を差し替える
+        if self.verdicts or self.observations or self.contradictions:
+            raise ValueError("要項モードの結果は判定・観測・矛盾を持てません")
+        if self.summary.verdict_counts:
+            raise ValueError("要項モードの集計に判定の件数は載せません")
+        return self
 
 
 def serialize_requirements(items: Iterable[object]) -> list[dict[str, Any]]:

@@ -29,6 +29,8 @@ class ErrorCode(StrEnum):
     REPO_PUBLIC_ONLY = "REPO_PUBLIC_ONLY"  # 非公開・存在しない・空のリポジトリ（区別しない）
     REPO_RATE_LIMITED = "REPO_RATE_LIMITED"  # GitHub の回数制限（429）
     REPO_UNAVAILABLE = "REPO_UNAVAILABLE"  # 取得が許可されない（S3 の規則が無効など）。いまは使えない
+    # 要項モード（第11弾）
+    SPEC_UNAVAILABLE = "SPEC_UNAVAILABLE"  # 取得が許可されない（S3 の SPEC_FETCH_ENABLED が無い・規則の外）。いまは使えない
 
 
 # 公開してよい固定文。値（URL・ID・数値）を埋め込まない＝漏洩の経路を作らない。
@@ -48,6 +50,7 @@ PUBLIC_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.REPO_PUBLIC_ONLY: "公開リポジトリのURLだけ対応しています。",
     ErrorCode.REPO_RATE_LIMITED: "GitHub の回数制限で、いまは確かめられません。",
     ErrorCode.REPO_UNAVAILABLE: "GitHubリポジトリの点検は、いま使えません。",
+    ErrorCode.SPEC_UNAVAILABLE: "要項のURLからの読み取りは、いま使えません。",
 }
 
 

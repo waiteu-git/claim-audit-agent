@@ -8,6 +8,9 @@
   POST /api/run       {"preset_id": "..."} だけを受ける（閉世界: 任意の URL は受けない）。応答は text/event-stream。
                       例外: GITHUB_INPUT_ENABLED=1 の時だけ {"preset_id": "github_repo", "repo_url": "https://github.com/<owner>/<repo>"} も受ける
                       （審査員コード専用・モデルを呼ばない固定3項目の点検。app/agent/repo_audit.py。他のプリセットは repo_url を受けない）
+                      例外: SPEC_INPUT_ENABLED=1 の時だけ {"preset_id": "spec_url", "spec_url": "https://…"} も受ける
+                      （要項モード。審査員コード専用。公開ページを1ページだけ取り、Reader だけにかけて要件の一覧だけを返す。
+                      app/agent/spec_read.py。他のプリセットは spec_url を受けない）
   /probe は持たない（S1 の疎通確認専用。公開面では 404）。
 
 POST /api/run の守り（上から順に）:
@@ -19,7 +22,7 @@ POST /api/run の守り（上から順に）:
      ライブが時間内に終わらなかった時（壁時計の上限での中断、または実行の外側の期限）は、判定のない中断の画面を出さず、
      mode（REPLAY・理由 LIVE_TIMEOUT・switched）を送って保存済みの実行へ切り替える（そのプリセットの同梱記録がある時だけ）
   5. REPLAY: 同梱の実行記録（app/web/replay/）を流す。Vertex・Firestore に依存しない
-SSE のイベント: mode（LIVE/REPLAY と理由）・trace（TraceEvent）・result（RunRecord。github_repo は RepoAuditResult）・error（ErrorCode と固定文だけ）・done。
+SSE のイベント: mode（LIVE/REPLAY と理由）・trace（TraceEvent）・result（RunRecord。github_repo は RepoAuditResult、spec_url は SpecOnlyRecord）・error（ErrorCode と固定文だけ）・done。
 例外の中身（str(e)・スタックトレース）は応答に出さない（非公開ログだけ）。
 """
 import asyncio
@@ -35,6 +38,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.agent.planner import InspectMode
 from app.agent.repo_audit import audit_repo
+from app.agent.spec_read import SpecReadOutcome, read_spec_pages
 from app.agent.report import report_json
 from app.agent.run import RunResult, run_audit
 from app.config import (
@@ -48,7 +52,7 @@ from app.config import (
     build_presets,
     get_settings,
 )
-from app.contracts import GITHUB_REPO_PRESET_ID, AbortReason, FetchPort, Preset, RunRecord, RunStatus, TraceEvent
+from app.contracts import GITHUB_REPO_PRESET_ID, SPEC_URL_PRESET_ID, AbortReason, FetchPort, Preset, RunRecord, RunStatus, TraceEvent
 from app.egress_guard import EgressGuard
 from app.errors import PUBLIC_MESSAGES, AppError, ErrorCode, PublicError, classify
 from app.fixtures.site import FixtureSite
@@ -57,6 +61,7 @@ from app.jsonlog import log_event, log_exception
 from app.model.port import ModelPort
 from app.model.retry import RetryingPort
 from app.model.wallbound import WallBoundPort
+from app.spec_url import SpecRef, parse_spec_url, spec_log_id
 from app.quota import Admission, AdmitRejected, InMemoryState, JudgeRequired, QuotaService, ReplayReason, StatePort
 from app.web.examples import build_examples
 from app.web.replay import ReplayBundle, load_fixture_records, load_replays
@@ -90,6 +95,16 @@ GITHUB_REPO_PRESET = {
     "input": "repo_url",
 }
 
+SPEC_URL_PRESET = {
+    "id": SPEC_URL_PRESET_ID,
+    "label": "要項のURLから要件の一覧だけを作る（審査員コード用）",
+    "kind": SPEC_URL_PRESET_ID,
+    "replay": False,  # 同梱の記録は無い
+    "input": "spec_url",
+}
+
+SpecModelFactory = Callable[[float], ModelPort]  # 壁時計の締切（monotonic）→ Reader のモデル
+
 
 @dataclass
 class WebDeps:
@@ -99,6 +114,8 @@ class WebDeps:
     fixtures: FixtureSite
     replays: dict[str, ReplayBundle]
     repo_fetch: Callable[[], FetchPort] | None = None  # GITHUB_INPUT_ENABLED の時だけ使う（固定ファイルの取得）。無ければ「いま使えません」
+    spec_fetch: Callable[[], FetchPort] | None = None  # SPEC_INPUT_ENABLED の時だけ使う（公開ページの取得）。無ければ「いま使えません」
+    spec_model: SpecModelFactory | None = None  # SPEC_INPUT_ENABLED の時だけ使う（Reader のモデル）。無ければ「いま使えません」
     replay_delay_s: float = 0.03
     heartbeat_s: float = GUARD_LIMITS.sse_heartbeat_s
     run_timeout_s: float = RUN_CAPS.wall_clock_s + 10.0  # Cloud Run の timeout（120 秒）の内側。切り替えの再生の分（数秒）を残す
@@ -148,6 +165,28 @@ def _build_repo_fetch(settings: Settings) -> FetchPort:  # pragma: no cover - �
     return SafeFetch((), repo_raw=RepoRawScope())  # 開発（ENV=public では起動時の検査が FETCH_MODE=remote を求める）
 
 
+def _build_spec_fetch(settings: Settings) -> FetchPort:  # pragma: no cover - 本番の配線（テストは偽の FetchPort を注入する）
+    if settings.fetch_backend is FetchBackend.REMOTE:
+        from app.net.fetcher_client import RemoteFetch, metadata_token_provider
+
+        if settings.fetcher_url is None:
+            raise RuntimeError("FETCH_MODE=remote には FETCHER_URL が要ります")
+        return RemoteFetch(settings.fetcher_url, metadata_token_provider(settings.fetcher_url))
+    from app.contracts import OpenPageScope
+    from app.net.safefetch import SafeFetch
+
+    return SafeFetch((), open_page=OpenPageScope())  # 開発（ENV=public では起動時の検査が FETCHER_URL を求める）
+
+
+def _build_spec_model(settings: Settings) -> SpecModelFactory:  # pragma: no cover - Vertex を呼ぶ（テストは台本の ModelPort を注入する）
+    def make(deadline: float) -> ModelPort:
+        from app.model.gemini import GeminiPort
+
+        return bound_model(GeminiPort.from_settings(settings, model_id=settings.gemini_model_reader), deadline_monotonic=deadline)
+
+    return make
+
+
 def default_live_runner(settings: Settings) -> LiveRunner:  # pragma: no cover - Vertex を呼ぶ（テストは注入する）
     async def run(preset: Preset, sink: Callable[[TraceEvent], None]) -> RunResult:
         from app.model.gemini import GeminiPort
@@ -186,6 +225,8 @@ def default_deps(settings: Settings) -> WebDeps:  # pragma: no cover - 本番の
         fixtures=FixtureSite.load(),
         replays=load_replays(),
         repo_fetch=(lambda: _build_repo_fetch(settings)) if settings.github_input_enabled else None,
+        spec_fetch=(lambda: _build_spec_fetch(settings)) if settings.spec_input_enabled else None,
+        spec_model=_build_spec_model(settings) if settings.spec_input_enabled else None,
     )
 
 
@@ -374,6 +415,84 @@ async def repo_events(deps: WebDeps, ref: RepoRef, adm: Admission) -> AsyncItera
                     log_event("web.settle_failed", severity="ERROR", error_type=type(e).__name__)
 
 
+async def spec_events(deps: WebDeps, refs: list[SpecRef], adm: Admission, t_request: float | None = None) -> AsyncIterator[bytes]:
+    """要項モードの SSE（mode →（trace）→ result → done。失敗は error → done）。Reader を呼ぶので、精算は実費（Reader の呼び出し分）。
+
+    切断（aclose・取り消し）・例外・期限切れで費用が分からない時は、予約額（最悪値）で精算する（live_events と同じ。shield の中で）。
+    モデルを呼ぶ前に終わった失敗（取得できなかった）は費用 0 で精算する。ログには URL を出さない（spec_log_id の12桁と型名だけ）。
+    """
+    queue: asyncio.Queue[TraceEvent] = asyncio.Queue()
+    settled = False
+    task: asyncio.Future | None = None
+    getter: asyncio.Future | None = None
+    budget_s = run_budget_s(deps, t_request if t_request is not None else time.monotonic(), time.monotonic())
+    ids = [spec_log_id(r) for r in refs]
+    try:
+        yield sse("mode", _json({"mode": "LIVE", "pool": adm.pool.value if adm.pool else None}))
+
+        async def work() -> SpecReadOutcome:
+            # 取得ポート・モデルの生成（設定の誤りで投げうる）も、ここ＝結果の変換の内側で行う
+            try:
+                port = deps.spec_fetch() if deps.spec_fetch is not None else None
+                model = deps.spec_model(time.monotonic() + RUN_CAPS.wall_clock_s) if deps.spec_model is not None else None
+            except Exception as e:  # noqa: BLE001  例外の中身は出さない
+                log_event("web.spec_port_failed", severity="ERROR", spec=ids, error_type=type(e).__name__)
+                return SpecReadOutcome(error=ErrorCode.SPEC_UNAVAILABLE)
+            if port is None or model is None:
+                return SpecReadOutcome(error=ErrorCode.SPEC_UNAVAILABLE)
+            async with asyncio.timeout(budget_s):
+                return await read_spec_pages(refs, fetch=port, reader_model=model, settings=deps.settings, trace_sink=queue.put_nowait)
+
+        task = asyncio.ensure_future(work())
+        while True:
+            if getter is None:
+                getter = asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait({getter, task}, timeout=deps.heartbeat_s, return_when=asyncio.FIRST_COMPLETED)
+            if getter in done:
+                ev = getter.result()
+                getter = None
+                yield sse("trace", ev.model_dump_json(exclude_none=True))
+                continue
+            if task in done:
+                while not queue.empty():
+                    yield sse("trace", queue.get_nowait().model_dump_json(exclude_none=True))
+                break
+            yield HEARTBEAT
+        try:
+            outcome = task.result()
+        except Exception as e:  # noqa: BLE001  公開してよいのは ErrorCode と固定文だけ。例外の中身（URL を含みうる）はログにも出さない
+            code = classify(e)
+            log_event("web.spec_failed", severity="ERROR", spec=ids, error_type=type(e).__name__, code=code.value)
+            if code is ErrorCode.FATAL_CONFIG:
+                await deps.quota.trip_kill()
+            if isinstance(e, TimeoutError):
+                code = ErrorCode.CANCELLED
+            yield sse("error", PublicError.from_code(code).model_dump_json())  # 費用は分からない＝finally が予約の最悪値で精算する
+        else:
+            if outcome.record is not None:
+                log_event("web.spec_done", spec=ids, requirements=len(outcome.record.requirements), status=outcome.record.status.value)
+                yield sse("result", report_json(outcome.record))
+            else:
+                code = outcome.error or ErrorCode.INTERNAL
+                log_event("web.spec_error", severity="WARNING", spec=ids, code=code.value)
+                yield sse("error", PublicError.from_code(code).model_dump_json())
+            await deps.quota.settle(adm, outcome.cost_micro_jpy)  # 実費（モデルを呼ぶ前に終わった時は 0）
+            settled = True
+        yield sse("done", "{}")
+    finally:
+        if getter is not None:
+            getter.cancel()
+        if task is not None and not task.done():
+            task.cancel()
+            log_event("web.spec_cancelled", severity="WARNING")
+        if not settled:
+            with anyio.CancelScope(shield=True):
+                try:
+                    await deps.quota.settle(adm, adm.reserved_micro_jpy)  # 費用が分からない＝予約額（最悪値）で精算
+                except Exception as e:  # noqa: BLE001
+                    log_event("web.settle_failed", severity="ERROR", error_type=type(e).__name__)
+
+
 # ---- アプリ ------------------------------------------------------------------------------------
 def create_app(settings: Settings | None = None, deps: WebDeps | None = None) -> FastAPI:
     settings = settings or get_settings()
@@ -434,7 +553,8 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
                     {"id": pid, "label": presets[pid].label_ja, "kind": presets[pid].kind.value, "replay": pid in deps.replays, **examples[pid]}
                     for pid in PRESET_IDS
                 ]
-                + ([GITHUB_REPO_PRESET] if settings.github_input_enabled else []),
+                + ([GITHUB_REPO_PRESET] if settings.github_input_enabled else [])
+                + ([SPEC_URL_PRESET] if settings.spec_input_enabled else []),
             },
             headers={"content-security-policy": API_CSP},
         )
@@ -463,6 +583,39 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
             headers={"content-security-policy": API_CSP, "cache-control": "no-store", "x-accel-buffering": "no"},
         )
 
+    async def run_spec(request: Request, refs: list[SpecRef], t_request: float) -> Response:
+        try:
+            adm = await deps.quota.admit(request.headers.get(JUDGE_HEADER), judge_only=True)
+        except AdmitRejected:
+            return deny(429, ErrorCode.QUOTA)
+        except JudgeRequired:
+            return deny(403, ErrorCode.JUDGE_REQUIRED)  # 匿名には開けない。枠は使わない
+        log_event("web.spec_admitted", spec=[spec_log_id(r) for r in refs], live=adm.live, reason=adm.replay_reason)
+        if not adm.live:
+            code = REPO_ERROR_FOR_REPLAY.get(adm.replay_reason, ErrorCode.KILLED) if adm.replay_reason else ErrorCode.KILLED
+
+            async def refused() -> AsyncIterator[bytes]:
+                yield sse("error", PublicError.from_code(code).model_dump_json())
+                yield sse("done", "{}")
+
+            stream = refused()
+        else:
+            stream = spec_events(deps, refs, adm, t_request)
+        return StreamingResponse(
+            stream,
+            media_type="text/event-stream",
+            headers={"content-security-policy": API_CSP, "cache-control": "no-store", "x-accel-buffering": "no"},
+        )
+
+    def spec_refs(data: dict) -> list[SpecRef] | None:
+        """要項モードの本文 → 検証済みの URL の列。形が違えば None（応答は INVALID_INPUT の固定文。入力は応答にもログにも出さない）。"""
+        if set(data) != {"preset_id", "spec_url"}:
+            return None
+        try:
+            return [parse_spec_url(data["spec_url"])]
+        except AppError:
+            return None
+
     @app.post("/api/run")
     async def api_run(request: Request) -> Response:
         if request.headers.get("origin", "").rstrip("/") != self_origin(request):
@@ -476,6 +629,12 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
             data = json.loads(body)
         except (ValueError, UnicodeDecodeError):
             return deny(400, ErrorCode.INVALID_INPUT)
+        if isinstance(data, dict) and data.get("preset_id") == SPEC_URL_PRESET_ID:
+            # spec_url の時だけ spec_url が要る（他のプリセットは spec_url を受けない・余計なキーは拒否）。フラグがオフの時は、知らないプリセットと同じ応答
+            refs = spec_refs(data) if settings.spec_input_enabled else None
+            if refs is None:
+                return deny(400, ErrorCode.INVALID_INPUT)
+            return await run_spec(request, refs, time.monotonic())
         repo_mode = isinstance(data, dict) and data.get("preset_id") == GITHUB_REPO_PRESET_ID
         if repo_mode:
             # github_repo の時だけ repo_url が要る（他のプリセットは repo_url を受けない・余計なキーは拒否）。フラグがオフの時は、知らないプリセットと同じ応答

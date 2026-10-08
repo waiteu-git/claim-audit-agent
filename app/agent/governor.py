@@ -68,7 +68,7 @@ from app.errors import AppError
 _NEXT: dict[Phase, frozenset[Phase]] = {
     Phase.ADMIT: frozenset({Phase.ACQUIRE}),
     Phase.ACQUIRE: frozenset({Phase.READ}),
-    Phase.READ: frozenset({Phase.AUTORUN, Phase.INSPECT}),
+    Phase.READ: frozenset({Phase.AUTORUN, Phase.INSPECT, Phase.REPORT}),  # READ → REPORT は要項モード（第11弾。検査・判定をしない）だけ
     Phase.AUTORUN: frozenset({Phase.INSPECT}),
     Phase.INSPECT: frozenset({Phase.ADJUDICATE}),
     Phase.ADJUDICATE: frozenset({Phase.REPORT}),

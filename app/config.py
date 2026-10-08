@@ -12,6 +12,10 @@
   GITHUB_INPUT_ENABLED（1 のみ有効。S2 だけ。GitHub 公開リポジトリのURLの入口。審査員コード専用。既定は無効。ROLE=fetcher での設定・
   JUDGE_CODE_SHA256 なしでの設定は起動を拒否。S3 側は GITHUB_RAW_ENABLED を別に立てる＝S2 からは S3 の状態が見えないので、
   S3 が取得を拒否した時は実行時に固定文「いま使えません」を返す）
+  SPEC_FETCH_ENABLED（1 のみ有効。S3 だけ。要項モードの「公開ページを1ページだけ」の取得規則 contracts.OpenPageScope。既定は無効。
+  ROLE=agent での設定は起動を拒否）
+  SPEC_INPUT_ENABLED（1 のみ有効。S2 だけ。要項モード＝公開ページの URL から要件の一覧だけを作る入口。審査員コード専用。既定は無効。
+  ROLE=fetcher での設定・JUDGE_CODE_SHA256 なしでの設定・ENV=public／FETCH_MODE=remote で FETCHER_URL なしの設定は起動を拒否）
   PORT（既定 8080）STATE_BACKEND(memory|firestore。枠・予約の保存先) JUDGE_CODE_SHA256（審査員コードの sha256 の16進。カンマ区切り。
   コードそのものは環境変数にも置かない）
 禁止（ENV=public で起動拒否）: GOOGLE_APPLICATION_CREDENTIALS・FAULT_* ・SCRIPTED_*（startup_violations）。
@@ -230,6 +234,12 @@ class FetchLimits(BaseModel):
     # raw.githubusercontent.com への要求を S3 でも数える。1実行は最大 8 件・768KB なので、1分に約 15 実行ぶん。超えたら 429（再試行可）
     repo_relay_requests_per_min: int = 120
     repo_relay_bytes_per_min: int = 12 * 1024 * 1024
+    # 要項モード（第11弾。contracts.OpenPageScope の規則で通った要求にだけ掛ける）
+    spec_max_page_bytes: int = 1024 * 1024  # 1ページの本文の上限（既存の上限 max_decoded_bytes 以下）。超えたら打切りでなく拒否
+    spec_max_pages: int = 1  # 1実行で取るページ数（呼び出し側が守る。S3 は実行の区切りを見られないので、下の窓あたりの数で絞る）
+    # S3 自身の取りすぎ止め（インスタンスごと・固定窓）。審査員の枠は1時間3回なので、1分に数件で足りる。超えたら 429
+    spec_relay_requests_per_min: int = 6
+    spec_relay_bytes_per_min: int = 6 * 1024 * 1024
     probe_retry_max: int = 1  # 1回だけ再試行（S-04）。再試行を fetches_probe に数えるかは設計に記載なし（未裁定）
 
 
@@ -309,6 +319,8 @@ class Settings(BaseModel):
     fetcher_url: HttpsUrl | None = None
     allowed_prefixes: tuple[UrlPrefix, ...] = ()
     github_raw_enabled: bool = False  # S3 だけ（contracts.RepoRawScope の規則を有効にする）。既定は無効＝許可リストの外は何も取れない
+    spec_fetch_enabled: bool = False  # S3 だけ（contracts.OpenPageScope の規則を有効にする）。既定は無効
+    spec_input_enabled: bool = False  # S2 だけ。要項モードの入口（審査員コード専用）。既定は無効＝公開面は今までと同じ
     github_input_enabled: bool = False  # S2 だけ。GitHub 公開リポジトリのURLの入口（審査員コード専用）。既定は無効＝公開面は今までと同じ
     lp_seed_urls: tuple[HttpsUrl, ...] = Field(default=(), max_length=3)
     log_level: str = "INFO"
@@ -337,6 +349,8 @@ class Settings(BaseModel):
             allowed_prefixes=parse_prefixes(e.get("ALLOWED_PREFIXES")),
             github_raw_enabled=_bool(e.get("GITHUB_RAW_ENABLED")),
             github_input_enabled=_bool(e.get("GITHUB_INPUT_ENABLED")),
+            spec_fetch_enabled=_bool(e.get("SPEC_FETCH_ENABLED")),
+            spec_input_enabled=_bool(e.get("SPEC_INPUT_ENABLED")),
             lp_seed_urls=_csv(e.get("LP_SEED_URLS")),
             log_level=(e.get("LOG_LEVEL") or "INFO").upper(),
             port=int(e.get("PORT") or 8080),
@@ -454,6 +468,14 @@ def startup_violations(
         early.append("GITHUB_INPUT_ENABLED には JUDGE_CODE_SHA256 が必要です（審査員コード専用の入口で、コードが無いと誰も使えません）")
     if settings.github_input_enabled and settings.fetcher_url is None and (settings.fetch_backend is FetchBackend.REMOTE or settings.env is EnvName.PUBLIC):
         early.append("GITHUB_INPUT_ENABLED には FETCHER_URL が必要です（取得は取得専用サービス S3 に任せます）")
+    if settings.role is Role.AGENT and settings.spec_fetch_enabled:
+        early.append("SPEC_FETCH_ENABLED は ROLE=fetcher（S3）だけで使う設定です")
+    if settings.role is Role.FETCHER and settings.spec_input_enabled:
+        early.append("SPEC_INPUT_ENABLED は ROLE=agent（S2）だけで使う設定です")
+    if settings.spec_input_enabled and not settings.judge_code_sha256:
+        early.append("SPEC_INPUT_ENABLED には JUDGE_CODE_SHA256 が必要です（審査員コード専用の入口で、コードが無いと誰も使えません）")
+    if settings.spec_input_enabled and settings.fetcher_url is None and (settings.fetch_backend is FetchBackend.REMOTE or settings.env is EnvName.PUBLIC):
+        early.append("SPEC_INPUT_ENABLED には FETCHER_URL が必要です（取得は取得専用サービス S3 に任せます）")
     if settings.env is not EnvName.PUBLIC:
         return early
     env = os.environ if environ is None else environ

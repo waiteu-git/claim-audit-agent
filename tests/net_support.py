@@ -243,8 +243,9 @@ def make_rig(
     limits: FetchLimits = FETCH_LIMITS,
     connect_errors: Mapping[str, Exception] | None = None,
     repo_raw=None,  # noqa: ANN001  contracts.RepoRawScope | None（GitHub 固定ファイルの規則。既定は無効）
+    open_page=None,  # noqa: ANN001  contracts.OpenPageScope | None（要項モードの公開ページの規則。既定は無効）
 ) -> Rig:
     resolver = FakeResolver(dns)
     net = FakeInternet(routes, connect_errors=connect_errors)
-    sf = SafeFetch(prefixes, limits=limits, resolver=resolver, network_backend=net, ssl_context=FAKE_SSL, repo_raw=repo_raw)
+    sf = SafeFetch(prefixes, limits=limits, resolver=resolver, network_backend=net, ssl_context=FAKE_SSL, repo_raw=repo_raw, open_page=open_page)
     return Rig(fetch=sf, resolver=resolver, net=net, limits=limits)
