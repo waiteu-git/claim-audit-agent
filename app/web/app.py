@@ -47,6 +47,7 @@ from app.errors import ErrorCode, PublicError, classify
 from app.fixtures.site import FixtureSite
 from app.jsonlog import log_event, log_exception
 from app.quota import Admission, AdmitRejected, InMemoryState, QuotaService, ReplayReason, StatePort
+from app.web.examples import build_examples
 from app.web.replay import ReplayBundle, load_replays
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -219,6 +220,7 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
     settings = settings or get_settings()
     deps = deps or default_deps(settings)
     presets = build_presets(settings)
+    examples = build_examples(presets)  # 正解表と同梱の記録がずれていれば、ここで起動を止める
     app = FastAPI(title="claim-audit-agent", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.deps = deps
     static = {path: ((STATIC_DIR / name).read_bytes(), ctype) for path, (name, ctype) in STATIC_FILES.items()}
@@ -266,7 +268,7 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
                     "tool_calls": RUN_CAPS.tool_calls, "fetches": RUN_CAPS.fetches_total, "wall_ms": int(RUN_CAPS.wall_clock_s * 1000),
                 },  # fmt: skip
                 "presets": [
-                    {"id": pid, "label": presets[pid].label_ja, "kind": presets[pid].kind.value, "replay": pid in deps.replays}
+                    {"id": pid, "label": presets[pid].label_ja, "kind": presets[pid].kind.value, "replay": pid in deps.replays, **examples[pid]}
                     for pid in PRESET_IDS
                 ],
             },
