@@ -95,6 +95,10 @@ class AdmitRejected(Exception):
     """ADMIT 前段のゲート（1試行/秒）で断った。公開面は 429 を返す。"""
 
 
+class JudgeRequired(Exception):
+    """審査員コード専用の入口で、コードが無い・合わない（ロック中を含む）。公開面は 403 を返す。枠は使わない。"""
+
+
 @dataclass(frozen=True)
 class Admission:
     live: bool
@@ -192,9 +196,13 @@ class QuotaService:
         return "LIVE" if self.settings.live_enabled else "REPLAY"
 
     # ---- ADMIT --------------------------------------------------------------------------------------
-    async def admit(self, judge_header: str | None = None) -> Admission:
+    async def admit(self, judge_header: str | None = None, *, judge_only: bool = False) -> Admission:
+        """judge_only=True（審査員コード専用の入口）では、コードが無い・合わない時に JudgeRequired を投げ、匿名の枠は使わない。
+        コードが合えば審査員の枠を予約する。失敗の数え方（1時間に5回でロック）は通常の経路と同じ。"""
         if not self._gate.take():
             raise AdmitRejected()
+        if judge_only and not judge_header:
+            raise JudgeRequired()
         if not self.settings.live_enabled:
             return Admission(False, replay_reason=ReplayReason.LIVE_DISABLED)
         try:
@@ -203,7 +211,11 @@ class QuotaService:
             pool = Pool.ANONYMOUS
             if judge_header:
                 pool = Pool.JUDGE if await self._judge_ok(judge_header) else Pool.ANONYMOUS
+            if judge_only and pool is not Pool.JUDGE:
+                raise JudgeRequired()
             return await self._reserve(pool)
+        except JudgeRequired:
+            raise
         except Exception as e:  # noqa: BLE001  fail-closed
             log_event("quota.store_unavailable", severity="ERROR", error_type=type(e).__name__)
             return Admission(False, replay_reason=ReplayReason.STORE_UNAVAILABLE)

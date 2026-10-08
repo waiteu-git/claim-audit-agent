@@ -5,7 +5,9 @@
   GET  /fx/{path}     架空フィクスチャの配信（app/fixtures/site.py の FixtureSite。sandbox の CSP）
   GET  /api/status    モード（LIVE／REPLAY／STOPPED）とプリセットの一覧（入力欄は無い。選べるのはプリセットだけ）。各プリセットに
                       fictional・fictional_note・links（読める要項と提出物）・planted（仕込んだ場所 → 見つけた結果。app/web/examples.py）
-  POST /api/run       {"preset_id": "..."} だけを受ける（閉世界: 任意の URL は受けない）。応答は text/event-stream
+  POST /api/run       {"preset_id": "..."} だけを受ける（閉世界: 任意の URL は受けない）。応答は text/event-stream。
+                      例外: GITHUB_INPUT_ENABLED=1 の時だけ {"preset_id": "github_repo", "repo_url": "https://github.com/<owner>/<repo>"} も受ける
+                      （審査員コード専用・モデルを呼ばない固定3項目の点検。app/agent/repo_audit.py。他のプリセットは repo_url を受けない）
   /probe は持たない（S1 の疎通確認専用。公開面では 404）。
 
 POST /api/run の守り（上から順に）:
@@ -17,7 +19,7 @@ POST /api/run の守り（上から順に）:
      ライブが時間内に終わらなかった時（壁時計の上限での中断、または実行の外側の期限）は、判定のない中断の画面を出さず、
      mode（REPLAY・理由 LIVE_TIMEOUT・switched）を送って保存済みの実行へ切り替える（そのプリセットの同梱記録がある時だけ）
   5. REPLAY: 同梱の実行記録（app/web/replay/）を流す。Vertex・Firestore に依存しない
-SSE のイベント: mode（LIVE/REPLAY と理由）・trace（TraceEvent）・result（RunRecord）・error（ErrorCode と固定文だけ）・done。
+SSE のイベント: mode（LIVE/REPLAY と理由）・trace（TraceEvent）・result（RunRecord。github_repo は RepoAuditResult）・error（ErrorCode と固定文だけ）・done。
 例外の中身（str(e)・スタックトレース）は応答に出さない（非公開ログだけ）。
 """
 import asyncio
@@ -32,6 +34,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.agent.planner import InspectMode
+from app.agent.repo_audit import audit_repo
 from app.agent.report import report_json
 from app.agent.run import RunResult, run_audit
 from app.config import (
@@ -45,15 +48,16 @@ from app.config import (
     build_presets,
     get_settings,
 )
-from app.contracts import AbortReason, FetchPort, Preset, RunRecord, RunStatus, TraceEvent
+from app.contracts import GITHUB_REPO_PRESET_ID, AbortReason, FetchPort, Preset, RunRecord, RunStatus, TraceEvent
 from app.egress_guard import EgressGuard
-from app.errors import ErrorCode, PublicError, classify
+from app.errors import AppError, ErrorCode, PublicError, classify
 from app.fixtures.site import FixtureSite
+from app.github_repo import RepoRef, parse_repo_url, repo_log_id
 from app.jsonlog import log_event, log_exception
 from app.model.port import ModelPort
 from app.model.retry import RetryingPort
 from app.model.wallbound import WallBoundPort
-from app.quota import Admission, AdmitRejected, InMemoryState, QuotaService, ReplayReason, StatePort
+from app.quota import Admission, AdmitRejected, InMemoryState, JudgeRequired, QuotaService, ReplayReason, StatePort
 from app.web.examples import build_examples
 from app.web.replay import ReplayBundle, load_fixture_records, load_replays
 
@@ -77,6 +81,16 @@ CLOUD_RUN_TIMEOUT_S = 120.0  # deploy.sh の --timeout（SSE の応答も、受�
 SWITCH_RESERVE_S = 12.0  # 外側の期限の後に要る分: 取り消しの後始末（最大1秒）・切り替えの再生（約1.5秒）・精算・通信の余裕
 
 
+REPO_AUDIT_TIMEOUT_S = 75.0  # 固定ファイルの取得（直列・最大7件）全体の外側の期限。Cloud Run の timeout（120 秒）の内側
+GITHUB_REPO_PRESET = {
+    "id": GITHUB_REPO_PRESET_ID,
+    "label": "GitHubの公開リポジトリ（審査員コード用）",
+    "kind": GITHUB_REPO_PRESET_ID,
+    "replay": False,  # 同梱の記録は無い
+    "input": "repo_url",
+}
+
+
 @dataclass
 class WebDeps:
     settings: Settings
@@ -84,6 +98,7 @@ class WebDeps:
     run_live: LiveRunner
     fixtures: FixtureSite
     replays: dict[str, ReplayBundle]
+    repo_fetch: Callable[[], FetchPort] | None = None  # GITHUB_INPUT_ENABLED の時だけ使う（固定ファイルの取得）。無ければ「いま使えません」
     replay_delay_s: float = 0.03
     heartbeat_s: float = GUARD_LIMITS.sse_heartbeat_s
     run_timeout_s: float = RUN_CAPS.wall_clock_s + 10.0  # Cloud Run の timeout（120 秒）の内側。切り替えの再生の分（数秒）を残す
@@ -118,6 +133,19 @@ def bound_model(port: ModelPort, *, deadline_monotonic: float) -> ModelPort:
     """再試行（壁時計の締切で止める）を、壁時計の内側に収める。応答の遅い時間帯に、呼び出し中のまま外側の期限へ当たらないように。"""
     retrying = RetryingPort(port, retries=RUN_CAPS.model_retries, backoff_s=RUN_CAPS.retry_backoff_s, deadline_monotonic=deadline_monotonic)
     return WallBoundPort(retrying, deadline_monotonic=deadline_monotonic)
+
+
+def _build_repo_fetch(settings: Settings) -> FetchPort:  # pragma: no cover - 本番の配線（テストは偽の FetchPort を注入する）
+    if settings.fetch_backend is FetchBackend.REMOTE:
+        from app.net.fetcher_client import RemoteFetch, metadata_token_provider
+
+        if settings.fetcher_url is None:
+            raise RuntimeError("FETCH_MODE=remote には FETCHER_URL が要ります")
+        return RemoteFetch(settings.fetcher_url, metadata_token_provider(settings.fetcher_url))
+    from app.contracts import RepoRawScope
+    from app.net.safefetch import SafeFetch
+
+    return SafeFetch((), repo_raw=RepoRawScope())  # 開発（ENV=public では起動時の検査が FETCH_MODE=remote を求める）
 
 
 def default_live_runner(settings: Settings) -> LiveRunner:  # pragma: no cover - Vertex を呼ぶ（テストは注入する）
@@ -157,6 +185,7 @@ def default_deps(settings: Settings) -> WebDeps:  # pragma: no cover - 本番の
         run_live=default_live_runner(settings),
         fixtures=FixtureSite.load(),
         replays=load_replays(),
+        repo_fetch=(lambda: _build_repo_fetch(settings)) if settings.github_input_enabled else None,
     )
 
 
@@ -280,6 +309,64 @@ async def replay_events(deps: WebDeps, preset_id: str, reason: ReplayReason | No
     yield sse("done", "{}")
 
 
+REPO_ERROR_FOR_REPLAY = {
+    ReplayReason.QUOTA: ErrorCode.QUOTA,
+    ReplayReason.BUDGET: ErrorCode.QUOTA,
+    ReplayReason.STORE_UNAVAILABLE: ErrorCode.STORE_UNAVAILABLE,
+}  # これ以外（LIVE_DISABLED・KILLED など）は KILLED＝停止中
+
+
+async def repo_events(deps: WebDeps, ref: RepoRef, adm: Admission) -> AsyncIterator[bytes]:
+    """GitHub 公開リポジトリの基本点検の SSE（mode → result → done。失敗は error → done）。モデルは呼ばない。
+
+    切断（aclose・取り消し）されても、予約は費用 0 で精算する（モデルを呼ばない＝取得だけなので、最悪値で残す理由がない）。
+    ログにはリポ名を出さない（repo_log_id の12桁と例外の型名だけ）。
+    """
+    settled = False
+    task: asyncio.Future | None = None
+    try:
+        yield sse("mode", _json({"mode": "LIVE", "pool": adm.pool.value if adm.pool else None}))
+        port = deps.repo_fetch() if deps.repo_fetch is not None else None
+
+        async def work():  # noqa: ANN202
+            if port is None:
+                return None
+            async with asyncio.timeout(REPO_AUDIT_TIMEOUT_S):
+                return await audit_repo(ref, port)
+
+        task = asyncio.ensure_future(work())
+        while not task.done():
+            await asyncio.wait({task}, timeout=deps.heartbeat_s)
+            if not task.done():
+                yield HEARTBEAT
+        error: ErrorCode | None
+        try:
+            outcome = task.result()
+        except Exception as e:  # noqa: BLE001  公開してよいのは ErrorCode と固定文だけ。例外の中身（URL を含みうる）はログにも出さない
+            log_event("web.repo_failed", severity="ERROR", repo=repo_log_id(ref), error_type=type(e).__name__)
+            error = classify(e) if isinstance(e, (AppError, TimeoutError)) else ErrorCode.INTERNAL
+            outcome = None
+        else:
+            error = ErrorCode.REPO_UNAVAILABLE if outcome is None else outcome.error
+        if outcome is not None and outcome.result is not None:
+            log_event("web.repo_done", repo=repo_log_id(ref), verdicts=outcome.result.summary.model_dump(mode="json")["verdict_counts"])
+            yield sse("result", outcome.result.model_dump_json())
+        else:
+            log_event("web.repo_error", severity="WARNING", repo=repo_log_id(ref), code=(error or ErrorCode.INTERNAL).value)
+            yield sse("error", PublicError.from_code(error or ErrorCode.INTERNAL).model_dump_json())
+        yield sse("done", "{}")
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+        if not settled:
+            with anyio.CancelScope(shield=True):
+                try:
+                    await deps.quota.settle(adm, 0)  # 費用 0 で精算（予約を残さない）
+                    settled = True
+                except Exception as e:  # noqa: BLE001
+                    log_event("web.settle_failed", severity="ERROR", error_type=type(e).__name__)
+
+
 # ---- アプリ ------------------------------------------------------------------------------------
 def create_app(settings: Settings | None = None, deps: WebDeps | None = None) -> FastAPI:
     settings = settings or get_settings()
@@ -336,9 +423,34 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
                 "presets": [
                     {"id": pid, "label": presets[pid].label_ja, "kind": presets[pid].kind.value, "replay": pid in deps.replays, **examples[pid]}
                     for pid in PRESET_IDS
-                ],
+                ]
+                + ([GITHUB_REPO_PRESET] if settings.github_input_enabled else []),
             },
             headers={"content-security-policy": API_CSP},
+        )
+
+    async def run_repo(request: Request, ref: RepoRef) -> Response:
+        try:
+            adm = await deps.quota.admit(request.headers.get(JUDGE_HEADER), judge_only=True)
+        except AdmitRejected:
+            return deny(429, ErrorCode.QUOTA)
+        except JudgeRequired:
+            return deny(403, ErrorCode.JUDGE_REQUIRED)  # 匿名には開けない。枠は使わない
+        log_event("web.repo_admitted", repo=repo_log_id(ref), live=adm.live, reason=adm.replay_reason)
+        if not adm.live:
+            code = REPO_ERROR_FOR_REPLAY.get(adm.replay_reason, ErrorCode.KILLED) if adm.replay_reason else ErrorCode.KILLED
+
+            async def refused() -> AsyncIterator[bytes]:
+                yield sse("error", PublicError.from_code(code).model_dump_json())
+                yield sse("done", "{}")
+
+            stream = refused()
+        else:
+            stream = repo_events(deps, ref, adm)
+        return StreamingResponse(
+            stream,
+            media_type="text/event-stream",
+            headers={"content-security-policy": API_CSP, "cache-control": "no-store", "x-accel-buffering": "no"},
         )
 
     @app.post("/api/run")
@@ -354,6 +466,16 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
             data = json.loads(body)
         except (ValueError, UnicodeDecodeError):
             return deny(400, ErrorCode.INVALID_INPUT)
+        repo_mode = isinstance(data, dict) and data.get("preset_id") == GITHUB_REPO_PRESET_ID
+        if repo_mode:
+            # github_repo の時だけ repo_url が要る（他のプリセットは repo_url を受けない・余計なキーは拒否）。フラグがオフの時は、知らないプリセットと同じ応答
+            if not settings.github_input_enabled or set(data) != {"preset_id", "repo_url"}:
+                return deny(400, ErrorCode.INVALID_INPUT)
+            try:
+                ref = parse_repo_url(data["repo_url"])
+            except AppError:
+                return deny(400, ErrorCode.INVALID_INPUT)  # 入力の文字列を応答にもログにも出さない（原因連鎖を持ち込まない）
+            return await run_repo(request, ref)
         if not isinstance(data, dict) or set(data) != {"preset_id"} or data["preset_id"] not in PRESET_IDS:
             return deny(400, ErrorCode.INVALID_INPUT)
         preset_id: str = data["preset_id"]

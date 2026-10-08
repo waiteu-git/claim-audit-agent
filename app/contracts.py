@@ -17,7 +17,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from enum import StrEnum
-from typing import Annotated, Any, Protocol, runtime_checkable
+from typing import Annotated, Any, Literal, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -728,6 +728,131 @@ class RepoRawScope(_Frozen):
             return False
         _, owner, repo, ref, name = parts
         return is_github_owner(owner) and is_github_repo(repo) and ref == GITHUB_RAW_REF and name in REPO_FILE_NAMES
+
+
+# ---------------------------------------------------------------------------
+# 「リポジトリの基本点検」の結果（第10弾。RunRecord とは別の型。要項の要件には結びつけない）
+# ---------------------------------------------------------------------------
+# 自由文を持てない型: 題名と理由は固定文の列挙型（値が日本語の固定文）、証拠のチップはコードの語彙の形だけ、
+# 件数は整数。リポジトリの文面・URL・数値が埋め込まれる経路を、型で作らない。判定を書くのは adjudicate.py だけ。
+GITHUB_REPO_PRESET_ID = "github_repo"
+REPO_FETCH_NAMES: tuple[str, ...] = ("README", "LICENSE", "Dockerfile", "requirements.txt")
+# github_repo.RepoFileStatus の値と同じ（tests/test_repo_audit.py が一致を固定する。contracts は github_repo に依存できない）
+REPO_FETCH_STATUSES: tuple[str, ...] = ("found", "not_found", "rate_limited", "transient", "rejected", "unusable", "skipped")
+
+
+class RepoItemId(StrEnum):
+    """点検項目の ID（固定の3つ）。"""
+
+    LICENSE = "license"
+    README_LEAK = "readme_leak"
+    TECH_TRACE = "tech_trace"
+
+
+class RepoItemTitle(StrEnum):
+    """点検項目の題名（固定文）。"""
+
+    LICENSE = "ライセンスの表示"
+    README_LEAK = "READMEに公開してはいけない情報が無いか"
+    TECH_TRACE = "必須技術の痕跡"
+
+
+class RepoReason(StrEnum):
+    """理由の固定文（リポの中身・URL・数値を埋め込まない。件数は証拠のチップで示す）。"""
+
+    LICENSE_IDENTIFIED = "LICENSE の文面が、標準のライセンス文と一致しました。リポジトリ全体への適用までは確かめていません。"
+    LICENSE_UNKNOWN = "ライセンスのファイルはありますが、種類を判定できません。ご自身で確認してください。"
+    LICENSE_MISSING = "ライセンスのファイルが見つかりません。"
+    LEAK_FOUND = "READMEに、公開してはいけない情報の形が見つかりました。種類と件数は証拠のとおりです。"
+    LEAK_NONE = "READMEの走査では、公開してはいけない情報の形は見つかりませんでした。走査したのはREADMEだけです。"
+    README_MISSING = "READMEが見つからないため、確かめていません。"
+    TECH_FOUND = "Google Cloud の AI 関連の固定辞書にあるパッケージの記載が見つかりました。どのファイルかは証拠のとおりです。"
+    TECH_NOT_SEEN = "取得できたファイルに、固定辞書の記載は見つかりませんでした。この点検では、ほかの書き方での利用は見分けられません。"
+    UNCHECKED_RATE_LIMITED = "GitHub の回数制限で、いまは確かめられません。"
+    UNCHECKED_TRANSIENT = "一時的な失敗で取得できず、確かめていません。"
+    UNCHECKED_REJECTED = "取得が許可されなかったため、確かめていません。"
+    UNCHECKED_UNUSABLE = "ファイルが大きすぎるか、テキストでないため、確かめていません。"
+    UNCHECKED_SKIPPED = "取得しなかったため、確かめていません。"
+
+
+REPO_EVIDENCE_CHIP = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,39}(?: ×[1-9][0-9]{0,5})?")
+
+
+class RepoEvidence(_Frozen):
+    """証拠のチップ。コードの語彙（ライセンスの識別子・走査の種類名・ファイル名）と、あれば件数（「email ×2」）だけ。"""
+
+    label: str
+
+    @field_validator("label")
+    @classmethod
+    def _shape(cls, v: str) -> str:
+        if REPO_EVIDENCE_CHIP.fullmatch(v) is None:
+            raise ValueError("証拠のチップの形ではありません")
+        return v
+
+
+class RepoItem(_Frozen):
+    """点検の1項目。ラベルは既存の5種のうち適合・不適合・確認不能だけを使う。"""
+
+    id: RepoItemId
+    title_ja: RepoItemTitle
+    label: VerdictLabel
+    reason_ja: RepoReason
+    evidence: tuple[RepoEvidence, ...] = Field(default=(), max_length=16)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "RepoItem":
+        if self.title_ja.name != self.id.name:
+            raise ValueError("題名が項目と合いません")
+        if self.label in (VerdictLabel.PASS, VerdictLabel.PRESUMED_PASS) and not self.evidence:
+            raise ValueError("適合には証拠が要ります")
+        if self.label is VerdictLabel.REFERENCE:
+            raise ValueError("この点検に参考はありません")
+        return self
+
+
+class RepoFetched(_Frozen):
+    """固定ファイル1種の取得の状態。"""
+
+    name: Literal["README", "LICENSE", "Dockerfile", "requirements.txt"]
+    status: Literal["found", "not_found", "rate_limited", "transient", "rejected", "unusable", "skipped"]
+
+
+class RepoWarning(_Frozen):
+    """警告。判定には使わない（件数だけ）。"""
+
+    code: Literal["INJECTION_SUSPECTED"]
+    count: int = Field(ge=1, le=1_000_000)
+
+
+class RepoSummary(_Frozen):
+    """判定ラベルごとの件数。"""
+
+    verdict_counts: dict[VerdictLabel, int]
+
+
+class RepoAuditResult(_Frozen):
+    """SSE の `result` に載る、リポジトリの基本点検の結果（固定3項目）。RunRecord ではない。"""
+
+    kind: Literal["repo_audit"] = "repo_audit"
+    mode: Literal["LIVE"] = "LIVE"
+    status: Literal["DONE"] = "DONE"
+    preset_id: Literal["github_repo"] = GITHUB_REPO_PRESET_ID
+    items: tuple[RepoItem, ...] = Field(min_length=3, max_length=3)
+    fetched: tuple[RepoFetched, ...] = Field(min_length=4, max_length=4)
+    warnings: tuple[RepoWarning, ...] = Field(default=(), max_length=1)
+    summary: RepoSummary
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "RepoAuditResult":
+        if [i.id for i in self.items] != list(RepoItemId):
+            raise ValueError("項目は固定の3つを決まった順で")
+        if [f.name for f in self.fetched] != list(REPO_FETCH_NAMES):
+            raise ValueError("取得の状態は固定の4つを決まった順で")
+        counts = {lab: sum(1 for i in self.items if i.label is lab) for lab in VerdictLabel}
+        if self.summary.verdict_counts != counts:
+            raise ValueError("集計が項目と合いません")
+        return self
 
 
 class PresetKind(StrEnum):

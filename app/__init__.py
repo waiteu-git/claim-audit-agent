@@ -12,13 +12,13 @@
   ingest/               sanitize（取得物 → SanitizedDoc）・css_hide・inject_scan
   quotes/               DocIndex・QuoteChecker（引用の逐語照合。「検証済み」の印を発行できるのはここだけ）
   github_repo.py        GitHub 公開リポジトリのURLの入口の検証（parse_repo_url）・取得先URLの組み立て・固定ファイルの取得（第7弾の土台。
-                        配線・画面・判定表への統合は未実装。contracts・config・errors・jsonlog だけに依存する。
-                        今は誰からも import されず、取り込み後に使うのは agent／web だけ＝tests/test_github_repo.py が固定）
+                        contracts・config・errors・jsonlog だけに依存する。使うのは agent／web だけ。第10弾で agent/repo_audit・web が使う）
   checks/               http_probe・auth_wall・text_length・cloud_run_signature・html_signals・class_screen・registry・leak_scan・
                         contains_terms（可視テキストの語の有無。固定辞書）・autorun（AUTORUN の計画と実行。第5弾）・
                         repo_inspect（リポジトリの固定ファイルから事実だけを返す純関数。判定は書かない。第7弾の土台）
-  adjudicate.py         判定表（要件×観測 → Verdict。判定を書けるのはこのコードだけ）と、要項間の矛盾（find_contradictions）
-  agent/                reader・planner（Planner ループと router）・governor・budget・tools・trace・state・acquire・autorun_phase・run・report
+  adjudicate.py         判定表（要件×観測 → Verdict。判定を書けるのはこのコードだけ）と、要項間の矛盾（find_contradictions）。
+                        第10弾: リポジトリの基本点検の固定3項目の判定（adjudicate_repo。要項の要件・モデルとは無関係）
+  agent/                repo_audit（第10弾: 固定ファイル取得 → repo_inspect の事実 → adjudicate_repo。モデルを呼ばない）・reader・planner（Planner ループと router）・governor・budget・tools・trace・state・acquire・autorun_phase・run・report
                         （第2弾 G2。autorun_phase は第5弾: READ の後・INSPECT の前に、前提が揃う検査を Governor 経由で必ず走らせる）
   cli.py                ローカル CLI（`python -m app.cli <preset>`）。agent と同じく他から import されない
   quota.py              予約→精算・審査員コード・匿名枠・二重ラッチ・ADMIT ゲート。保存先は StatePort（InMemoryState／state_firestore.py）

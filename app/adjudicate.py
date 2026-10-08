@@ -40,9 +40,11 @@ from enum import StrEnum
 
 from app.checks.class_screen import quote_supports_class
 from app.checks.probe_facts import TARGET_SUBMISSION
+from app.checks.repo_inspect import DOCKERFILE, REQUIREMENTS_FILE, LicenseFact, ReadmeFact, TechTraceFact
 from app.contracts import (
     CHECK_CLASS_CHECKER,
     REASON_LABEL_JA,
+    REPO_FETCH_NAMES,
     AdjudicationInput,
     Checker,
     Contradiction,
@@ -56,6 +58,15 @@ from app.contracts import (
     ObsCode,
     ObsOutcome,
     PageClass,
+    RepoAuditResult,
+    RepoEvidence,
+    RepoFetched,
+    RepoItem,
+    RepoItemId,
+    RepoItemTitle,
+    RepoReason,
+    RepoSummary,
+    RepoWarning,
     Slot,
     UnverifiableMark,
     UnverifiableReason,
@@ -623,3 +634,91 @@ def find_contradictions(requirements: Sequence[VerifiedRequirement]) -> tuple[Co
             if len(out) >= MAX_CONTRADICTIONS:
                 return tuple(out)
     return tuple(out)
+
+
+# ---------------------------------------------------------------------------
+# リポジトリの基本点検（第10弾）: 固定3項目をコードが判定する。要項の要件・Reader・モデルとは無関係
+# ---------------------------------------------------------------------------
+# 入力は、取得の状態（RepoFileStatus の値）と、repo_inspect が返した事実（frozen な型）だけ。リポの文面そのものは来ない。
+# 理由は RepoReason の固定文、証拠は語彙（ライセンスの識別子・走査の種類名・ファイル名）と件数だけ。確かめていない項目を「適合」と言わない。
+_UNCHECKED_REASON = {
+    "rate_limited": RepoReason.UNCHECKED_RATE_LIMITED,
+    "transient": RepoReason.UNCHECKED_TRANSIENT,
+    "rejected": RepoReason.UNCHECKED_REJECTED,
+    "unusable": RepoReason.UNCHECKED_UNUSABLE,
+    "skipped": RepoReason.UNCHECKED_SKIPPED,
+}
+# 取れなかった理由の強さ（複数ファイルのうち、最も言うべきものを1つ選ぶ）
+_UNCHECKED_ORDER = ("rate_limited", "transient", "rejected", "unusable", "skipped")
+
+
+@dataclass(frozen=True)
+class RepoFacts:
+    """repo_inspect の事実。取れなかった（found 以外の）ファイルの事実は None。"""
+
+    statuses: Mapping[str, str]  # REPO_FETCH_NAMES の名前 → RepoFileStatus の値
+    license: LicenseFact | None
+    readme: ReadmeFact | None
+    tech: TechTraceFact | None
+
+
+def _unchecked(*statuses: str) -> RepoReason:
+    """found でも not_found でもない状態のうち、最も強いものの固定文。"""
+    for st in _UNCHECKED_ORDER:
+        if st in statuses:
+            return _UNCHECKED_REASON[st]
+    return RepoReason.UNCHECKED_SKIPPED
+
+
+def _repo_license(f: RepoFacts) -> RepoItem:
+    st = f.statuses["LICENSE"]
+    title = RepoItemTitle.LICENSE
+    if st == "found" and f.license is not None and f.license.present:
+        if f.license.identified:
+            return RepoItem(id=RepoItemId.LICENSE, title_ja=title, label=VerdictLabel.PASS, reason_ja=RepoReason.LICENSE_IDENTIFIED,
+                            evidence=(RepoEvidence(label=f.license.kind.value),))  # fmt: skip
+        return RepoItem(id=RepoItemId.LICENSE, title_ja=title, label=VerdictLabel.UNVERIFIABLE, reason_ja=RepoReason.LICENSE_UNKNOWN)
+    if st == "not_found":
+        return RepoItem(id=RepoItemId.LICENSE, title_ja=title, label=VerdictLabel.FAIL, reason_ja=RepoReason.LICENSE_MISSING)
+    return RepoItem(id=RepoItemId.LICENSE, title_ja=title, label=VerdictLabel.UNVERIFIABLE, reason_ja=_unchecked(st))
+
+
+def _repo_readme(f: RepoFacts) -> RepoItem:
+    st = f.statuses["README"]
+    title = RepoItemTitle.README_LEAK
+    if st == "found" and f.readme is not None and f.readme.present:
+        if f.readme.leak_total > 0:
+            chips = tuple(RepoEvidence(label=f"{kind} ×{n}") for kind, n in f.readme.leak_counts)
+            return RepoItem(id=RepoItemId.README_LEAK, title_ja=title, label=VerdictLabel.FAIL, reason_ja=RepoReason.LEAK_FOUND, evidence=chips)
+        return RepoItem(id=RepoItemId.README_LEAK, title_ja=title, label=VerdictLabel.PASS, reason_ja=RepoReason.LEAK_NONE,
+                        evidence=(RepoEvidence(label="README"),))  # fmt: skip
+    reason = RepoReason.README_MISSING if st == "not_found" else _unchecked(st)
+    return RepoItem(id=RepoItemId.README_LEAK, title_ja=title, label=VerdictLabel.UNVERIFIABLE, reason_ja=reason)
+
+
+def _repo_tech(f: RepoFacts) -> RepoItem:
+    title = RepoItemTitle.TECH_TRACE
+    tech = f.tech
+    if tech is not None and tech.packages:
+        files = [name for name, names in ((DOCKERFILE, tech.in_dockerfile), (REQUIREMENTS_FILE, tech.in_requirements)) if names]
+        chips = tuple(RepoEvidence(label=name) for name in files)
+        return RepoItem(id=RepoItemId.TECH_TRACE, title_ja=title, label=VerdictLabel.PASS, reason_ja=RepoReason.TECH_FOUND, evidence=chips)
+    states = (f.statuses["Dockerfile"], f.statuses["requirements.txt"])
+    bad = [s for s in states if s not in ("found", "not_found")]
+    reason = _unchecked(*bad) if bad else RepoReason.TECH_NOT_SEEN  # 痕跡なしは「無い」ではなく「この点検では見えなかった」＝確認不能
+    return RepoItem(id=RepoItemId.TECH_TRACE, title_ja=title, label=VerdictLabel.UNVERIFIABLE, reason_ja=reason)
+
+
+def adjudicate_repo(facts: RepoFacts) -> RepoAuditResult:
+    """固定3項目（ライセンス・READMEの漏洩・必須技術の痕跡）の判定。ラベルは既存の5種だけ。純関数。"""
+    items = (_repo_license(facts), _repo_readme(facts), _repo_tech(facts))
+    warnings: tuple[RepoWarning, ...] = ()
+    if facts.readme is not None and facts.readme.injection_suspicions > 0:
+        warnings = (RepoWarning(code="INJECTION_SUSPECTED", count=facts.readme.injection_suspicions),)  # 件数だけ。判定には使わない
+    counts = {lab: sum(1 for i in items if i.label is lab) for lab in VerdictLabel}
+    return RepoAuditResult(
+        items=items,
+        fetched=tuple(RepoFetched(name=n, status=facts.statuses[n]) for n in REPO_FETCH_NAMES),  # type: ignore[arg-type]
+        warnings=warnings,
+        summary=RepoSummary(verdict_counts=counts),
+    )

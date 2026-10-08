@@ -9,6 +9,9 @@
   PROMPT_VERSION SELF_ORIGIN SUBMISSION_URL FETCHER_URL LP_SEED_URLS(カンマ区切り・最大3) LOG_LEVEL
   ALLOWED_PREFIXES（S3 の取得スコープ。`[exact:]host[/path]` のカンマ区切り）
   GITHUB_RAW_ENABLED（1 のみ有効。S3 だけ。raw.githubusercontent.com の固定ファイル取得の規則。既定は無効。ROLE=agent での設定は起動を拒否）
+  GITHUB_INPUT_ENABLED（1 のみ有効。S2 だけ。GitHub 公開リポジトリのURLの入口。審査員コード専用。既定は無効。ROLE=fetcher での設定・
+  JUDGE_CODE_SHA256 なしでの設定は起動を拒否。S3 側は GITHUB_RAW_ENABLED を別に立てる＝S2 からは S3 の状態が見えないので、
+  S3 が取得を拒否した時は実行時に固定文「いま使えません」を返す）
   PORT（既定 8080）STATE_BACKEND(memory|firestore。枠・予約の保存先) JUDGE_CODE_SHA256（審査員コードの sha256 の16進。カンマ区切り。
   コードそのものは環境変数にも置かない）
 禁止（ENV=public で起動拒否）: GOOGLE_APPLICATION_CREDENTIALS・FAULT_* ・SCRIPTED_*（startup_violations）。
@@ -306,6 +309,7 @@ class Settings(BaseModel):
     fetcher_url: HttpsUrl | None = None
     allowed_prefixes: tuple[UrlPrefix, ...] = ()
     github_raw_enabled: bool = False  # S3 だけ（contracts.RepoRawScope の規則を有効にする）。既定は無効＝許可リストの外は何も取れない
+    github_input_enabled: bool = False  # S2 だけ。GitHub 公開リポジトリのURLの入口（審査員コード専用）。既定は無効＝公開面は今までと同じ
     lp_seed_urls: tuple[HttpsUrl, ...] = Field(default=(), max_length=3)
     log_level: str = "INFO"
     port: int = Field(default=8080, ge=1, le=65535)
@@ -332,6 +336,7 @@ class Settings(BaseModel):
             fetcher_url=e.get("FETCHER_URL") or None,
             allowed_prefixes=parse_prefixes(e.get("ALLOWED_PREFIXES")),
             github_raw_enabled=_bool(e.get("GITHUB_RAW_ENABLED")),
+            github_input_enabled=_bool(e.get("GITHUB_INPUT_ENABLED")),
             lp_seed_urls=_csv(e.get("LP_SEED_URLS")),
             log_level=(e.get("LOG_LEVEL") or "INFO").upper(),
             port=int(e.get("PORT") or 8080),
@@ -443,6 +448,10 @@ def startup_violations(
     if settings.role is Role.AGENT and settings.github_raw_enabled:
         # 取得の規則は S3 だけが持つ。S2 に付けても働かない設定は、付けた人の思い違い（S2 で取れると思う）なので起動時に止める
         early.append("GITHUB_RAW_ENABLED は ROLE=fetcher（S3）だけで使う設定です")
+    if settings.role is Role.FETCHER and settings.github_input_enabled:
+        early.append("GITHUB_INPUT_ENABLED は ROLE=agent（S2）だけで使う設定です")
+    if settings.github_input_enabled and not settings.judge_code_sha256:
+        early.append("GITHUB_INPUT_ENABLED には JUDGE_CODE_SHA256 が必要です（審査員コード専用の入口で、コードが無いと誰も使えません）")
     if settings.env is not EnvName.PUBLIC:
         return early
     env = os.environ if environ is None else environ

@@ -24,6 +24,11 @@ class ErrorCode(StrEnum):
     FETCH_FAILED = "FETCH_FAILED"  # 取得に失敗（接続・上限・種別）
     STORE_UNAVAILABLE = "STORE_UNAVAILABLE"  # Firestore 不達
     INTERNAL = "INTERNAL"  # 分類できない例外。不明なら開けない（fail-closed）
+    # GitHub 公開リポジトリの入口（第10弾）。画面が種類ごとの固定文を出し分けるための語
+    JUDGE_REQUIRED = "JUDGE_REQUIRED"  # 審査員コードが無い・合わない（匿名には開けない入口）
+    REPO_PUBLIC_ONLY = "REPO_PUBLIC_ONLY"  # 非公開・存在しない・空のリポジトリ（区別しない）
+    REPO_RATE_LIMITED = "REPO_RATE_LIMITED"  # GitHub の回数制限（429）
+    REPO_UNAVAILABLE = "REPO_UNAVAILABLE"  # 取得が許可されない（S3 の規則が無効など）。いまは使えない
 
 
 # 公開してよい固定文。値（URL・ID・数値）を埋め込まない＝漏洩の経路を作らない。
@@ -39,6 +44,10 @@ PUBLIC_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.FETCH_FAILED: "ページを取得できませんでした。",
     ErrorCode.STORE_UNAVAILABLE: "記録の保存先に接続できませんでした。",
     ErrorCode.INTERNAL: "内部エラーが発生しました。",
+    ErrorCode.JUDGE_REQUIRED: "この機能は審査員コードのある方だけ使えます。",
+    ErrorCode.REPO_PUBLIC_ONLY: "公開リポジトリのURLだけ対応しています。",
+    ErrorCode.REPO_RATE_LIMITED: "GitHub の回数制限で、いまは確かめられません。",
+    ErrorCode.REPO_UNAVAILABLE: "GitHubリポジトリの点検は、いま使えません。",
 }
 
 
