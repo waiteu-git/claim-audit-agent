@@ -11,8 +11,11 @@
   net/                  SafeFetch（外向き HTTP の唯一の出口）: urlcheck・ipcheck・resolver・backend・decode・safefetch・vectors
   ingest/               sanitize（取得物 → SanitizedDoc）・css_hide・inject_scan
   quotes/               DocIndex・QuoteChecker（引用の逐語照合。「検証済み」の印を発行できるのはここだけ）
+  github_repo.py        GitHub 公開リポジトリのURLの入口の検証（parse_repo_url）・取得先URLの組み立て・固定ファイルの取得（第7弾の土台。
+                        配線・画面・判定表への統合は未実装。contracts・config・errors・jsonlog だけに依存し、他から import されない）
   checks/               http_probe・auth_wall・text_length・cloud_run_signature・html_signals・class_screen・registry・leak_scan・
-                        contains_terms（可視テキストの語の有無。固定辞書）・autorun（AUTORUN の計画と実行。第5弾）
+                        contains_terms（可視テキストの語の有無。固定辞書）・autorun（AUTORUN の計画と実行。第5弾）・
+                        repo_inspect（リポジトリの固定ファイルから事実だけを返す純関数。判定は書かない。第7弾の土台）
   adjudicate.py         判定表（要件×観測 → Verdict。判定を書けるのはこのコードだけ）と、要項間の矛盾（find_contradictions）
   agent/                reader・planner（Planner ループと router）・governor・budget・tools・trace・state・acquire・autorun_phase・run・report
                         （第2弾 G2。autorun_phase は第5弾: READ の後・INSPECT の前に、前提が揃う検査を Governor 経由で必ず走らせる）
@@ -29,6 +32,7 @@ import の向き（上が下へ依存してよい。逆向き・循環は tests/
   textsafe / errors            他の app モジュールに依存しない
   contracts                    errors・textsafe だけ
   config / jsonlog             contracts（jsonlog は errors）
+  github_repo                  contracts・config・errors・jsonlog（net には依存しない。S3 の規則は contracts.RepoRawScope を共有する）
   net / model / quotes         contracts・config・jsonlog・errors・textsafe（互いには依存しない）
   ingest                       net.urlcheck（リンク表のスコープ判定を取得時の検査と同じ定義にするため）・textsafe
   checks                       ingest.sanitize.decode_body（本文の文字コードの読みを1つにするため）・config・errors
@@ -39,4 +43,6 @@ import の向き（上が下へ依存してよい。逆向き・循環は tests/
 
 「同じ事実を2か所で判定しない」: 文字コードは ingest.sanitize.decode_body、スコープ照合は contracts.UrlPrefix.matches と
 net.urlcheck.validate_url が唯一の定義（tests/test_integration_consistency.py が割れないことを固定する）。
+GitHub の owner/repo の形と固定ファイル名は contracts（is_github_owner・is_github_repo・REPO_FILE_NAMES・RepoRawScope）が唯一の定義で、
+入口の検証（github_repo）と S3 の許可規則（net.safefetch の repo_raw）が同じ関数を使う。
 """

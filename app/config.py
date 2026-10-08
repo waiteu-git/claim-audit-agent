@@ -8,6 +8,7 @@
   GOOGLE_CLOUD_PROJECT GEMINI_LOCATION(既定 asia-northeast1) GEMINI_MODEL(既定 gemini-3.5-flash) GEMINI_MODEL_READER GEMINI_MODEL_PLANNER
   PROMPT_VERSION SELF_ORIGIN SUBMISSION_URL FETCHER_URL LP_SEED_URLS(カンマ区切り・最大3) LOG_LEVEL
   ALLOWED_PREFIXES（S3 の取得スコープ。`[exact:]host[/path]` のカンマ区切り）
+  GITHUB_RAW_ENABLED（1 のみ有効。S3 だけ。raw.githubusercontent.com の固定ファイル取得の規則。既定は無効。ROLE=agent での設定は起動を拒否）
   PORT（既定 8080）STATE_BACKEND(memory|firestore。枠・予約の保存先) JUDGE_CODE_SHA256（審査員コードの sha256 の16進。カンマ区切り。
   コードそのものは環境変数にも置かない）
 禁止（ENV=public で起動拒否）: GOOGLE_APPLICATION_CREDENTIALS・FAULT_* ・SCRIPTED_*（startup_violations）。
@@ -218,6 +219,10 @@ class FetchLimits(BaseModel):
     user_agent: str = "claim-audit-agent/1 (hackathon demo; read-only)"
     accept_encoding: str = "gzip, deflate"
     probe_retry_delay_s: float = 2.0  # TRANSIENT（タイムアウト・接続失敗・429/503）の後、2秒待って
+    # GitHub 公開リポジトリの固定ファイル取得（第7弾の土台。contracts.RepoRawScope の規則で通った要求にだけ掛ける）
+    repo_max_files: int = 8  # 1実行の取得件数（呼び出し側 github_repo が数える）
+    repo_max_file_bytes: int = 256 * 1024  # 1ファイル。超えたら読まずに／読み切らずに拒否（S3 が強制する）
+    repo_max_total_bytes: int = 768 * 1024  # 1実行の合計（呼び出し側 github_repo が数える）
     probe_retry_max: int = 1  # 1回だけ再試行（S-04）。再試行を fetches_probe に数えるかは設計に記載なし（未裁定）
 
 
@@ -296,6 +301,7 @@ class Settings(BaseModel):
     submission_url: HttpsUrl | None = None
     fetcher_url: HttpsUrl | None = None
     allowed_prefixes: tuple[UrlPrefix, ...] = ()
+    github_raw_enabled: bool = False  # S3 だけ（contracts.RepoRawScope の規則を有効にする）。既定は無効＝許可リストの外は何も取れない
     lp_seed_urls: tuple[HttpsUrl, ...] = Field(default=(), max_length=3)
     log_level: str = "INFO"
     port: int = Field(default=8080, ge=1, le=65535)
@@ -321,6 +327,7 @@ class Settings(BaseModel):
             submission_url=e.get("SUBMISSION_URL") or None,
             fetcher_url=e.get("FETCHER_URL") or None,
             allowed_prefixes=parse_prefixes(e.get("ALLOWED_PREFIXES")),
+            github_raw_enabled=_bool(e.get("GITHUB_RAW_ENABLED")),
             lp_seed_urls=_csv(e.get("LP_SEED_URLS")),
             log_level=(e.get("LOG_LEVEL") or "INFO").upper(),
             port=int(e.get("PORT") or 8080),
@@ -427,12 +434,16 @@ def startup_violations(
     environ: Mapping[str, str] | None = None,
     loaded_modules: Mapping[str, object] | None = None,
 ) -> list[str]:
-    """ENV=public で守るべき条件の違反を返す（空なら安全）。ENV=public 以外は検査しない。"""
+    """ENV=public で守るべき条件の違反を返す（空なら安全）。ENV=public 以外は検査しない（ただし GITHUB_RAW_ENABLED を S2 に付けた設定は環境を問わず拒否）。"""
+    early: list[str] = []
+    if settings.role is Role.AGENT and settings.github_raw_enabled:
+        # 取得の規則は S3 だけが持つ。S2 に付けても働かない設定は、付けた人の思い違い（S2 で取れると思う）なので起動時に止める
+        early.append("GITHUB_RAW_ENABLED は ROLE=fetcher（S3）だけで使う設定です")
     if settings.env is not EnvName.PUBLIC:
-        return []
+        return early
     env = os.environ if environ is None else environ
     mods = sys.modules if loaded_modules is None else loaded_modules
-    out: list[str] = []
+    out: list[str] = early
     if settings.role is Role.AGENT and settings.fetch_backend is not FetchBackend.REMOTE:
         # agent は、外向きの取得を取得専用サービス（fetcher）に任せる。fetcher 自身は SafeFetch をプロセス内で使う（remote にしない）。
         # 10/8: この条件が全ロールに掛かっていて、雛形どおりに出した fetcher が起動を拒否されることを、デプロイ前に手元で見つけた

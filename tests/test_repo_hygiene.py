@@ -182,6 +182,8 @@ ALLOWED_EDGES: dict[str, set[str]] = {
     "quota": {"config", "contracts", "jsonlog"},
     "egress_guard": {"config"},
     "state_firestore": {"quota"},
+    # 第7弾の土台
+    "github_repo": {"config", "contracts", "errors", "jsonlog"},  # jsonlog: ログにリポ名を出さず sha256 の先頭12桁だけを出すため
 }
 TOP_LEVEL_ONLY = {"agent", "cli", "main", "web"}  # 他の単位から import されない
 # 例外: 入口は、組み立て済みの agent を呼ぶ。cli（python -m app.cli）・web（公開面 S2）・fixtures（評価 eval.py。OracleReader＋router で

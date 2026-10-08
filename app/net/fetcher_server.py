@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.contracts import FetchPort, FetchRequest
+from app.contracts import FetchPort, FetchRequest, RepoRawScope
 from app.jsonlog import log_event, log_exception
 
 MAX_FETCH_REQUEST_BYTES = 8 * 1024
@@ -38,7 +38,8 @@ def create_fetcher_app(
     if fetch is None:
         from app.net.safefetch import SafeFetch
 
-        fetch = SafeFetch(settings.allowed_prefixes)  # 空なら何も取れない（fail-closed）
+        # 空なら何も取れない（fail-closed）。GITHUB_RAW_ENABLED=1 の時だけ、公開リポジトリの固定ファイルの規則を足す（既定は無効）
+        fetch = SafeFetch(settings.allowed_prefixes, repo_raw=RepoRawScope() if settings.github_raw_enabled else None)
     app = FastAPI(title="claim-audit-fetcher", docs_url=None, redoc_url=None, openapi_url=None)
     port: FetchPort = fetch
 
