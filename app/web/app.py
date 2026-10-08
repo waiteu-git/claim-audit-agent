@@ -480,8 +480,12 @@ async def spec_events(deps: WebDeps, refs: list[SpecRef], adm: Admission, t_requ
                 code = outcome.error or ErrorCode.INTERNAL
                 log_event("web.spec_error", severity="WARNING", spec=ids, code=code.value)
                 yield sse("error", PublicError.from_code(code).model_dump_json())
-            await deps.quota.settle(adm, outcome.cost_micro_jpy)  # 実費（モデルを呼ぶ前に終わった時は 0）
-            settled = True
+            with anyio.CancelScope(shield=True):  # 精算の2つのトランザクションの間で取り消されても、日次の支出まで書き切る
+                try:
+                    await deps.quota.settle(adm, outcome.cost_micro_jpy)  # 実費（モデルを呼ぶ前に終わった時は 0）
+                    settled = True
+                except Exception as e:  # noqa: BLE001  失敗したら finally が予約額で精算し直す（予約が残っていれば）
+                    log_event("web.settle_failed", severity="ERROR", error_type=type(e).__name__)
         yield sse("done", "{}")
     finally:
         if getter is not None:

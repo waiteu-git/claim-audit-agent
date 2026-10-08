@@ -19,7 +19,8 @@ GitHub 公開リポジトリの固定ファイル（第7弾の土台。contracts
   転送先（ホップ1以降）に規則は使わない＝転送は許可リストの範囲だけを追う（規則は入口の要求だけ）。
 
 要項モードの公開ページ（第11弾。contracts.OpenPageScope。S3 の設定 SPEC_FETCH_ENABLED で有効にした時だけ）:
-  最初の要求（ホップ0）が、許可リストに合わず、正規の形（validate_url の正規化の結果と文字列が一致・断片無し・mode=page）の時だけ通す。
+  要項モードの印（FetchMode.SPEC_PAGE）のある最初の要求（ホップ0）が、正規の形（validate_url の正規化の結果と文字列が一致・断片無し）の
+  時だけ通す。印のある要求には許可リスト・固定ファイルの規則を当てず、印の無い要求にはこの規則を当てない（規則の取り違えを型で分ける）。
   通った要求には固定ファイルと同じ厳しい扱いを掛ける（転送は追わず 3xx をそのまま返す・200 の本文だけ・text/html と text/plain だけ・
   本文は spec_max_page_bytes まで（超えたら打切りでなく拒否）・NUL を含む本文は拒否）。名前解決後の私的・予約済みアドレスの拒否は
   ほかの取得と同じ GuardedResolver を通る。
@@ -381,15 +382,13 @@ class SafeFetch:
         return f"/{raw_path}" == normalized.path and scope.matches(normalized.host, normalized.path)
 
     def _open_page_match(self, url: str, normalized: NormalizedUrl, mode: FetchMode) -> bool:
-        """要項モードの公開ページの規則に合うか（規則が無効なら常に False）。許可リストに合う URL には使わない（従来の扱いのまま）。
+        """要項モードの公開ページの規則に合うか（規則が無効・印が無いなら常に False）。
 
-        受け取った文字列が正規化の結果と一致すること（大文字・末尾ドット・明示の :443・`..`・断片などで形を変えたものは通さない）と、
-        本文を読む取得（mode=page）であることを求める。S2 は検証済みの正規形だけを送る。
+        要項モードの印（mode=spec_page）と、受け取った文字列が正規化の結果と一致すること（大文字・末尾ドット・明示の :443・`..`・
+        断片などで形を変えたものは通さない）を求める。S2 は要項モードの取得にだけ印を付け、検証済みの正規形だけを送る。
         """
         scope = self._open_page
-        if scope is None or mode is not FetchMode.PAGE or "#" in url or url != normalized.url:
-            return False
-        if in_scope(normalized, self._prefixes):
+        if scope is None or mode is not FetchMode.SPEC_PAGE or "#" in url or url != normalized.url:
             return False
         return scope.matches(normalized.host, normalized.path)
 
@@ -406,10 +405,13 @@ class SafeFetch:
         except UrlRejected as e:
             raise _Denied(PolicyId.SCOPE, e.code.value, scope_ok=False) from e
         strict: _StrictRule | None = None
-        if initial and self._repo_raw_match(url, normalized):
-            strict = self._repo_rule
-        elif initial and self._open_page_match(url, normalized, mode):
+        if mode is FetchMode.SPEC_PAGE:
+            # 要項モードの印のある要求は、公開ページの規則だけで決める（許可リスト・固定ファイルの規則は当てない。転送先も追わない）
+            if not (initial and self._open_page_match(url, normalized, mode)):
+                raise _Denied(PolicyId.SCOPE, UrlReject.SCOPE_OUT.value, scope_ok=False)
             strict = self._page_rule
+        elif initial and self._repo_raw_match(url, normalized):
+            strict = self._repo_rule
         if strict is None and not in_scope(normalized, self._prefixes):
             raise _Denied(PolicyId.SCOPE, UrlReject.SCOPE_OUT.value, scope_ok=False)
         try:
@@ -489,7 +491,7 @@ class SafeFetch:
             if strict and content_length is not None and content_length > strict.max_bytes:
                 reply.outcome, reply.limit_hit, reply.note = FetchOutcome.TOO_LARGE, FetchLimit.CONTENT_LENGTH, strict.size_note
                 return reply  # 読む前に拒否
-            if mode is FetchMode.PAGE and content_length is not None and content_length > limits.max_content_length:
+            if mode is not FetchMode.PROBE and content_length is not None and content_length > limits.max_content_length:
                 reply.outcome, reply.limit_hit, reply.note = FetchOutcome.TOO_LARGE, FetchLimit.CONTENT_LENGTH, "size.content_length"
                 return reply  # 読む前に拒否
 
