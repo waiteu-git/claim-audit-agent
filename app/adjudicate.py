@@ -47,6 +47,7 @@ from app.contracts import (
     Checker,
     Contradiction,
     ContradictionBasis,
+    DemotionReason,
     DocMeta,
     DocRole,
     EvidenceRef,
@@ -451,6 +452,22 @@ def _unverifiable(
     )
 
 
+_REFERENCE_TAIL = "参考として表示し、判定の集計に含めません。"
+
+
+def _reference_reason(req: VerifiedRequirement) -> str:
+    """推測（参考）にした理由の文。引用が原文と一致しているのに「原文に引用できない」と書かない（降格の理由ごとに言い分ける）。"""
+    if req.span is None:  # 引用が逐語一致せず、モデルの言い換え（推論）だけが残った
+        return "原文に引用できないモデルの推論のため、" + _REFERENCE_TAIL
+    if req.demotion is DemotionReason.NO_OBLIGATION_WORD:
+        return "引用は原文と一致しますが、義務の語が無いため、確かな要件としては扱わず、" + _REFERENCE_TAIL
+    if req.demotion is DemotionReason.NEGATION_OR_EXCEPTION:
+        return "引用は原文と一致しますが、否定・例外を含む文のため、確かな要件としては扱わず、" + _REFERENCE_TAIL
+    if req.demotion is DemotionReason.SENTENCE_TOO_LONG:
+        return "引用は原文と一致しますが、文が長く、範囲を確かめきれないため、確かな要件としては扱わず、" + _REFERENCE_TAIL
+    return "モデルが推測と申告した要件のため、" + _REFERENCE_TAIL  # 引用は検証済みで、申告が推測のまま
+
+
 def _decide(
     req: VerifiedRequirement,
     observations: Sequence[Observation],
@@ -459,11 +476,7 @@ def _decide(
     obs_by_id: Mapping[str, Observation],
 ) -> Verdict:
     if req.kind is Kind.SPECULATIVE:
-        return Verdict(
-            req_id=req.req_id,
-            label=VerdictLabel.REFERENCE,
-            reason="原文に引用できないモデルの推論のため、参考として表示し、判定の集計に含めません。",
-        )
+        return Verdict(req_id=req.req_id, label=VerdictLabel.REFERENCE, reason=_reference_reason(req))
 
     checker = CHECK_CLASS_CHECKER[req.check_class]
     if checker is not None:

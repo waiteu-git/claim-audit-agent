@@ -230,6 +230,22 @@ def test_speculative_requirements_are_always_reference_and_never_counted(with_ob
     assert "全て適合" not in v.reason  # モデルの言い換え（gist）は判定の文面に入らない
 
 
+def test_the_reference_reason_does_not_claim_the_quote_is_missing_when_the_quote_matched():
+    """引用が原文と一致しているのに、コードが推測へ降格した要件に、「原文に引用できない」と書かない（10/8 の実LP・別分野の文書で見つかった表示の誤り）。"""
+    sp = make_verified("R9", doc=SPEC, needle=SENTENCES["len"], kind=C.Kind.SPECULATIVE, declared_kind=C.Kind.REQUIRED,
+                       check_class=CC.NONE, demotion=C.DemotionReason.NO_OBLIGATION_WORD)  # fmt: skip
+    v = one(sp)
+    assert v.label is L.REFERENCE
+    assert "一致" in v.reason and "義務の語が無い" in v.reason and "原文に引用できない" not in v.reason
+    for reason, word in ((C.DemotionReason.NEGATION_OR_EXCEPTION, "否定・例外"), (C.DemotionReason.SENTENCE_TOO_LONG, "文が長く")):
+        chips = (C.Chip.NEGATION_OR_EXCEPTION,) if reason is C.DemotionReason.NEGATION_OR_EXCEPTION else ()
+        r = make_verified("R9", doc=SPEC, needle=SENTENCES["len"], kind=C.Kind.SPECULATIVE, declared_kind=C.Kind.REQUIRED,
+                          check_class=CC.NONE, demotion=reason, chips=chips)  # fmt: skip
+        assert word in one(r).reason and "原文に引用できない" not in one(r).reason
+    declared = make_verified("R9", doc=SPEC, needle=SENTENCES["len"], kind=C.Kind.SPECULATIVE, declared_kind=C.Kind.SPECULATIVE, check_class=CC.NONE)
+    assert "推測と申告" in one(declared).reason
+
+
 # ---------------------------------------------------------------------------
 # 観測の食い違い・取り違え（矛盾した入力の扱い）
 # ---------------------------------------------------------------------------
