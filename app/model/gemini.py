@@ -4,16 +4,13 @@ location / model は環境変数（config.Settings）から渡す。自動の関
 どのツールを呼べるかは呼び出しごとに Governor が決める（allowed_tool_names → mode=ANY）。
 
 【実測の状態】（設計 §3・§6-1 が求めた「thinking の設定名」と「usage に thoughts が含まれるか」）
-- 未実測。実行環境に GOOGLE_CLOUD_PROJECT が無く、Vertex を呼べなかった（プロジェクト ID を探しに行かない規則）。
-  実測は `python -m ops.measure_gemini`（GOOGLE_CLOUD_PROJECT を渡して最大8回・短い出力）で取り、
-  結果をこの節へ書き戻すこと。実測するまで下の SDK 定義からの推測で組んである。
-- SDK（google-genai 2.27.0）の定義から分かること（実モデルの挙動ではない）:
-  * ThinkingConfig は thinking_budget（int）と thinking_level（MINIMAL/LOW/MEDIUM/HIGH）の両方を持つ。
-    gemini-3.7-flash がどちらを受けるかは未確認。既定は thinking_budget（設計の「Reader 1,024／Planner 512」）で、
-    拒否されたら thinking_param="thinking_level" に切り替える（予算→水準の写像は _budget_to_level）。
-  * usage_metadata は candidates_token_count と thoughts_token_count を別フィールドで持つ。
-    thoughts が candidates に含まれるかは未確認のため、Usage.tokens_out は「足す」（候補＋thoughts）。
-    もし candidates が thoughts を既に含むなら二重計上＝安全側（過大見積り）に倒れる。実測で確定する。
+- gemini-3.5-flash（asia-northeast1）で 2026-10-08 に実測した（構造化出力と関数呼び出し mode=ANY の両方）:
+  * thinking_budget=0 も thinking_level=MINIMAL も受理され、思考トークンは出ない。指定しないと約650トークンを思考して
+    1回の応答が5秒前後になる。本作は thinking_budget（Reader・Planner とも 0）を使う。拒否されるモデルへ変える時は
+    thinking_param="thinking_level" に切り替える（予算→水準の写像は _budget_to_level）。
+  * usage_metadata の candidates_token_count は thoughts_token_count を含まない（出力61・thoughts 653 と別々に返る）。
+    Usage.tokens_out は両方を足す。
+  * gemini-3.5-flash-lite・gemini-3.1-flash-lite は global でしか使えない。比較の結果は config.py の DEFAULT_GEMINI_MODEL の注に書いた。
 """
 import asyncio
 import time

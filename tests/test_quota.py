@@ -93,16 +93,37 @@ def test_in_memory_state_satisfies_the_protocol_and_refuses_writes_to_unread_key
 def test_anonymous_is_four_runs_a_day_one_per_six_hour_slot_with_no_per_user_key():
     now = Now(datetime(2026, 10, 9, 15, 30, tzinfo=UTC))  # JST 10/10 00:30
     q = svc(now=now)
-    assert run(q.admit()).live
+
+    def live_run() -> None:
+        # 実行が終わると実費で精算される。予約（最悪の1実行）を残したままだと、枠より先に日の円上限に当たる（下の別テスト）
+        adm = run(q.admit())
+        assert adm.live
+        run(q.settle(adm, 1_000_000))
+
+    live_run()
     assert run(q.admit()).replay_reason is ReplayReason.QUOTA  # 同じ枠（0〜6時）は1回
     for _ in range(3):
         now.advance(hours=6)
-        assert run(q.admit()).live
+        live_run()
     now.advance(hours=5)  # JST 23:30（18時の枠を使用済み）
     assert run(q.admit()).replay_reason is ReplayReason.QUOTA
     day = q.store.docs["dev/day/2026-10-10"]
     assert day["runs"] == {"anonymous": 4} and set(day["anon_slots"]) == {"00", "06", "12", "18"}
     assert set(day) <= {"_date", "runs", "anon_slots", "spent"}  # 利用者ごとのキー（IP 等）は作らない
+
+
+def test_unsettled_reservations_reach_the_daily_yen_cap_before_the_slots_do():
+    # 予約額は最悪の1実行（約¥50）なので、精算されない予約（実行が落ちた・切断した）が溜まると、枠より先に匿名の日の円上限（¥100）に
+    # 当たる。実行が終われば実費（数円）で精算されるので通常は起きず、起きても REPLAY に落ちるだけで上限は超えない。
+    now = Now(datetime(2026, 10, 9, 15, 30, tzinfo=UTC))  # JST 10/10 00:30
+    q = svc(now=now)
+    fits = QUOTA_POLICY.anonymous.daily_cap_micro_jpy // RESERVATION_MICRO_JPY
+    assert fits == 2
+    for _ in range(fits):
+        assert run(q.admit()).live
+        now.advance(hours=6)
+    adm = run(q.admit())
+    assert adm.replay_reason is ReplayReason.BUDGET and adm.pool is Pool.ANONYMOUS
 
 
 def test_reservation_then_settlement_uses_the_actual_cost():

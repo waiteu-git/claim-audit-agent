@@ -5,7 +5,7 @@
 
 環境変数（既定は fail-closed 側）:
   ROLE(agent|fetcher) ENV(public|staging|dev) FETCH_MODE(inproc|remote) LIVE_ENABLED(1 のみ有効) KILL_SWITCH(1 のみ有効)
-  GOOGLE_CLOUD_PROJECT GEMINI_LOCATION(既定 asia-northeast1) GEMINI_MODEL(既定 gemini-2.5-flash) GEMINI_MODEL_READER GEMINI_MODEL_PLANNER
+  GOOGLE_CLOUD_PROJECT GEMINI_LOCATION(既定 asia-northeast1) GEMINI_MODEL(既定 gemini-3.5-flash) GEMINI_MODEL_READER GEMINI_MODEL_PLANNER
   PROMPT_VERSION SELF_ORIGIN SUBMISSION_URL FETCHER_URL LP_SEED_URLS(カンマ区切り・最大3) LOG_LEVEL
   ALLOWED_PREFIXES（S3 の取得スコープ。`[exact:]host[/path]` のカンマ区切り）
   PORT（既定 8080）STATE_BACKEND(memory|firestore。枠・予約の保存先) JUDGE_CODE_SHA256（審査員コードの sha256 の16進。カンマ区切り。
@@ -117,22 +117,28 @@ class PriceTable(BaseModel):
 
 
 # 公式の料金ページ（Vertex AI・Standard・入力20万トークン以下）を 2026-10-08 に確認した:
+#   gemini-3.5-flash       入力 $1.65 / 100万トークン・出力（回答と推論） $9.90（リージョン指定＝非グローバルの価格。
+#                          グローバルは $1.50 / $9.00）→ ¥150/$ で 247.5（切り上げて 248）/ 1,485
 #   gemini-2.5-flash       入力 $0.30 / 100万トークン・出力（回答と推論） $2.50 → ¥150/$ で 45 / 375
 #   gemini-2.5-flash-lite  入力 $0.10 / 100万トークン・出力（回答と推論） $0.40 → ¥150/$ で 15 / 60
-# 為替 ¥150/$ は概算の固定値（実際の請求の円換算とは一致しない）。default は、登録していないモデルを安全側
-# （入力 $1/M・出力 $5/M 相当）で見積もるための暫定値で、予約額 RESERVATION_MICRO_JPY もこの default で最悪値を測る。
+# 為替 ¥150/$ は概算の固定値（実際の請求の円換算とは一致しない）。2.5 系は提供終了（2026-10-20）後も残す
+# （同梱の実行記録がそのモデルで取られており、記録の見積もりを同じ表で検算するため）。
+# default は、登録していないモデルを安全側（入力 $2/M・出力 $10/M 相当）で見積もるための暫定値。登録したどのモデルの
+# 単価も下回らないこと（テストで固定）。予約額 RESERVATION_MICRO_JPY もこの default で最悪値を測る。
 PRICE_TABLE = PriceTable(
     checked_on="2026-10-08",
-    source="Vertex AI の公式料金ページ（Standard・入力20万トークン以下）。為替は ¥150/$ の概算の固定値。未登録のモデルは default（安全側の暫定値）",
-    default=ModelPrice(input_jpy_per_mtok=150, output_jpy_per_mtok=750),
+    source="Vertex AI の公式料金ページ（Standard・入力20万トークン以下。gemini-3 系はリージョン指定の価格）。為替は ¥150/$ の概算の固定値。未登録のモデルは default（安全側の暫定値）",
+    default=ModelPrice(input_jpy_per_mtok=300, output_jpy_per_mtok=1500),
     models={
+        "gemini-3.5-flash": ModelPrice(input_jpy_per_mtok=248, output_jpy_per_mtok=1485),
         "gemini-2.5-flash": ModelPrice(input_jpy_per_mtok=45, output_jpy_per_mtok=375),
         "gemini-2.5-flash-lite": ModelPrice(input_jpy_per_mtok=15, output_jpy_per_mtok=60),
     },
 )
 
-# 最悪の1実行（入力9万＋出力1.4万）の約¥24 を丸めた予約額 ¥25（§6-1）
-RESERVATION_MICRO_JPY = 25_000_000
+# 最悪の1実行（入力9万＋出力1.4万）を default 単価で測ると ¥48。これを丸めた予約額 ¥50（§6-1）。
+# 既定モデル gemini-3.5-flash の最悪値は約¥43 で、これも下回る（テストで固定）。
+RESERVATION_MICRO_JPY = 50_000_000
 
 
 def worst_case_micro_jpy(caps: RunCaps = RUN_CAPS, prices: PriceTable = PRICE_TABLE, model_id: str = "") -> int:
@@ -235,9 +241,16 @@ class FetchBackend(StrEnum):
     REMOTE = "remote"  # S2: fetcher（S3）へ ID token で
 
 
-# 10/7 実測: gemini-3.7-flash(global)は同じ入力で5〜17秒と揺れて504（自前の25秒期限）が出た。gemini-2.5-flash は
-# 東京で1〜2秒・LPの通し実行(router)18秒でDONE・要件64件。東京に置くとデータもリージョン内に留まる。環境変数で戻せる
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+# 既定のモデルは gemini-3.5-flash（東京）。選んだ経緯（2026-10-08 の実測と公式の提供期間表）:
+#  * gemini-2.5-flash は Vertex で 2026-10-20 に提供終了（公式の Model versions and lifecycle）。締切（10/15）の5日後に
+#    審査期間の途中で止まるため、締切前に移す。提供終了日が12月より後と公式が約束している後継は 3.5-flash（2027-05-19以降）・
+#    3.5-flash-lite（2027-07-21以降）・3.1-flash-lite（2027-05-07以降）。このうち東京（asia-northeast1）で使えるのは 3.5-flash だけ。
+#  * 欠陥変種8件×{Planner, router} を実モデルで測り、3.5-flash は 2.5-flash と同じ検出（ツール呼び出し・モデル呼び出しの数も同じ）に
+#    なった。3.5-flash-lite（global）は案内ページを辿る g1found / g2missing で検出を落としたので採らない。3.1-flash-lite（global）は
+#    JSON の応答が 7〜15 秒と遅く不安定。10/7 に測った 3.7-flash（global）も 5〜17 秒と揺れて 504 が出た。
+#  * thinking_budget=0 は 3.5-flash でも通る（思考トークン0）。既定のままだと約650トークンを思考して遅く高くなる。
+# 環境変数 GEMINI_MODEL / GEMINI_LOCATION で差し替えられる（差し替えるなら料金表と予約額を同時に見直す）。
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 DEFAULT_GEMINI_LOCATION = "asia-northeast1"
 _FORBIDDEN_ENV_PREFIXES = ("FAULT_", "SCRIPTED_")  # 故障注入・台本は staging 専用（§8 ⑩）
 

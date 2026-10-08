@@ -42,23 +42,43 @@ def test_price_table_records_the_official_check_and_keeps_a_conservative_default
     assert not t.provisional and t.checked_on == "2026-10-08"  # 公式の料金ページを確認した日（確認日を更新せずに値だけ変えない）
     assert "公式" in t.source and "¥150/$" in t.source
     # 登録していないモデルは、安全側の暫定値で見積もる（予約額もこの default で最悪値を測る）
-    assert (t.default.input_jpy_per_mtok, t.default.output_jpy_per_mtok) == (150, 750)
-    # 公式: gemini-2.5-flash は入力 $0.30・出力 $2.50 / 100万トークン（×150円）。flash-lite は $0.10・$0.40
+    assert (t.default.input_jpy_per_mtok, t.default.output_jpy_per_mtok) == (300, 1500)
+    # 公式: gemini-3.5-flash は入力 $1.65・出力 $9.90 / 100万トークン（リージョン指定の価格。×150円＝247.5 を切り上げて 248）。
+    # gemini-2.5-flash は入力 $0.30・出力 $2.50（2.5 は提供終了後も、同梱の実行記録の検算のために残す）。flash-lite は $0.10・$0.40
+    assert t.cost_micro_jpy("gemini-3.5-flash", 1_000_000, 0) == 248_000_000
+    assert t.cost_micro_jpy("gemini-3.5-flash", 0, 1_000_000) == 1_485_000_000
     assert t.cost_micro_jpy("gemini-2.5-flash", 1_000_000, 0) == 45_000_000
     assert t.cost_micro_jpy("gemini-2.5-flash", 0, 1_000_000) == 375_000_000
     assert t.cost_micro_jpy("gemini-2.5-flash-lite", 1_000_000, 1_000_000) == 75_000_000
-    assert t.cost_micro_jpy("gemini-2.5-flash", 1000, 200) < t.cost_micro_jpy("unregistered-model", 1000, 200)
+    assert t.cost_micro_jpy("gemini-3.5-flash", 1000, 200) < t.cost_micro_jpy("unregistered-model", 1000, 200)
+
+
+def test_the_default_price_is_never_below_a_registered_model():
+    # 「登録していないモデルは安全側で見積もる」が成り立つように、default は登録したどのモデルの単価も下回らない
+    t = cfg.PRICE_TABLE
+    for model_id, p in t.models.items():
+        assert t.default.input_jpy_per_mtok >= p.input_jpy_per_mtok, model_id
+        assert t.default.output_jpy_per_mtok >= p.output_jpy_per_mtok, model_id
+
+
+def test_the_default_model_is_registered_in_the_price_table():
+    # 既定のモデルが未登録だと、実行記録の費用が default（過大）で見積もられ、画面の金額がずれる
+    assert cfg.DEFAULT_GEMINI_MODEL in cfg.PRICE_TABLE.models
 
 
 def test_reservation_covers_the_worst_case_run():
     worst = cfg.worst_case_micro_jpy()
-    assert worst == 24_000_000  # 約¥24
-    assert cfg.RESERVATION_MICRO_JPY == 25_000_000 >= worst
+    assert worst == 48_000_000  # default 単価で約¥48
+    assert cfg.RESERVATION_MICRO_JPY == 50_000_000 >= worst
+    # 登録したどのモデルでも、caps を使い切った1実行が予約額に収まる（既定の gemini-3.5-flash は約¥43）
+    for model_id in cfg.PRICE_TABLE.models:
+        assert cfg.worst_case_micro_jpy(model_id=model_id) <= cfg.RESERVATION_MICRO_JPY, model_id
+    assert cfg.worst_case_micro_jpy(model_id="gemini-3.5-flash") == 43_110_000
 
 
 def test_cost_is_micro_yen_per_token():
-    # 入力 1,000 + 出力 200 トークン = 1000*150 + 200*750 micro 円 = 0.3 円
-    assert cfg.PRICE_TABLE.cost_micro_jpy("any-model", 1000, 200) == 300_000
+    # 入力 1,000 + 出力 200 トークン = 1000*300 + 200*1500 micro 円 = 0.6 円
+    assert cfg.PRICE_TABLE.cost_micro_jpy("any-model", 1000, 200) == 600_000
     assert cfg.PRICE_TABLE.cost_micro_jpy("any-model", 0, 0) == 0
 
 
@@ -85,7 +105,7 @@ def test_defaults_are_fail_closed(clean_env):
     s = cfg.load_settings({})
     assert s.env is EnvName.DEV and s.role is cfg.Role.AGENT and s.fetch_backend is cfg.FetchBackend.INPROC
     assert s.live_enabled is False and s.kill_switch is False and s.google_cloud_project is None
-    assert s.gemini_model_reader == s.gemini_model_planner == "gemini-2.5-flash" and s.gemini_location == "asia-northeast1"
+    assert s.gemini_model_reader == s.gemini_model_planner == "gemini-3.5-flash" and s.gemini_location == "asia-northeast1"
 
 
 def test_environment_is_read_into_settings():
