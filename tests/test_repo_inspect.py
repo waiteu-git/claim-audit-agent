@@ -232,16 +232,20 @@ def test_every_leak_kind_is_counted_by_the_existing_scanner_and_only_counts_are_
     for kind, text in samples.items():
         f = scan_readme(f"before\n{text}\nafter")
         got = dict(f.leak_counts)
+        if kind == "service_url":
+            assert got == {}  # README の公開 URL は数えない（提出物の検査 leak_scan は従来どおり数える）
+            assert leak_scan.scan_text(text).get("service_url", 0) >= 1
+            continue
         assert kind in got and got[kind] >= 1, kind
-        assert f.leak_counts == tuple(sorted(leak_scan.scan_text(text).items())) or kind in got
         assert text not in repr(f) and text not in f.model_dump_json()  # 見つけた文字列は持たない
 
 
 def test_leak_counts_match_the_existing_scan_text_exactly():
     text = "\n".join(synthetic_leaks().values()) + "\nsomeone@example.invalid again"
-    assert dict(scan_readme(text).leak_counts) == leak_scan.scan_text(text)
+    expected = {k: v for k, v in leak_scan.scan_text(text).items() if k != "service_url"}  # service_url だけは README では数えない
+    assert dict(scan_readme(text).leak_counts) == expected
     assert dict(scan_readme(text).leak_counts)["email"] == 3
-    assert scan_readme(text).leak_total == sum(leak_scan.scan_text(text).values())
+    assert scan_readme(text).leak_total == sum(expected.values())
     fullwidth = "contact: someone＠example.invalid"  # 全角の＠（leak_scan が NFKC に畳む）
     assert dict(scan_readme(fullwidth).leak_counts) == {"email": 1}
 

@@ -50,7 +50,7 @@ from app.config import (
 )
 from app.contracts import GITHUB_REPO_PRESET_ID, AbortReason, FetchPort, Preset, RunRecord, RunStatus, TraceEvent
 from app.egress_guard import EgressGuard
-from app.errors import AppError, ErrorCode, PublicError, classify
+from app.errors import PUBLIC_MESSAGES, AppError, ErrorCode, PublicError, classify
 from app.fixtures.site import FixtureSite
 from app.github_repo import RepoRef, parse_repo_url, repo_log_id
 from app.jsonlog import log_event, log_exception
@@ -326,9 +326,14 @@ async def repo_events(deps: WebDeps, ref: RepoRef, adm: Admission) -> AsyncItera
     task: asyncio.Future | None = None
     try:
         yield sse("mode", _json({"mode": "LIVE", "pool": adm.pool.value if adm.pool else None}))
-        port = deps.repo_fetch() if deps.repo_fetch is not None else None
 
         async def work():  # noqa: ANN202
+            # 取得ポートの生成（設定の誤りで投げうる）も、ここ＝結果の変換の内側で行う
+            try:
+                port = deps.repo_fetch() if deps.repo_fetch is not None else None
+            except Exception as e:  # noqa: BLE001  例外の中身は出さない
+                log_event("web.repo_port_failed", severity="ERROR", repo=repo_log_id(ref), error_type=type(e).__name__)
+                return None
             if port is None:
                 return None
             async with asyncio.timeout(REPO_AUDIT_TIMEOUT_S):
@@ -344,7 +349,9 @@ async def repo_events(deps: WebDeps, ref: RepoRef, adm: Admission) -> AsyncItera
             outcome = task.result()
         except Exception as e:  # noqa: BLE001  公開してよいのは ErrorCode と固定文だけ。例外の中身（URL を含みうる）はログにも出さない
             log_event("web.repo_failed", severity="ERROR", repo=repo_log_id(ref), error_type=type(e).__name__)
-            error = classify(e) if isinstance(e, (AppError, TimeoutError)) else ErrorCode.INTERNAL
+            # リポの点検の失敗: 期限切れ・通信・取得の失敗は「取得できませんでした」（モデルの固定文にしない）。他は内部エラー
+            fetch_failure = isinstance(e, (TimeoutError, OSError)) or (isinstance(e, AppError) and e.code in (ErrorCode.FETCH_FAILED, ErrorCode.FETCH_BLOCKED))
+            error = ErrorCode.FETCH_FAILED if fetch_failure else ErrorCode.INTERNAL
             outcome = None
         else:
             error = ErrorCode.REPO_UNAVAILABLE if outcome is None else outcome.error
@@ -384,7 +391,10 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
         return f"{request.url.scheme}://{request.headers.get('host', '')}"  # 開発: 同じホストだけ
 
     def deny(status: int, code: ErrorCode) -> JSONResponse:
-        return JSONResponse({"ok": False, "code": code.value}, status_code=status, headers={"content-security-policy": API_CSP})
+        body: dict[str, object] = {"ok": False, "code": code.value}
+        if code is ErrorCode.JUDGE_REQUIRED:
+            body["message"] = PUBLIC_MESSAGES[code]  # 新しい入口の拒否だけ固定文を付ける（既存の拒否の応答は変えない）
+        return JSONResponse(body, status_code=status, headers={"content-security-policy": API_CSP})
 
     @app.exception_handler(Exception)
     async def on_error(request: Request, exc: Exception) -> JSONResponse:

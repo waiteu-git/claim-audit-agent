@@ -115,10 +115,10 @@ def test_all_good_repo_passes_with_evidence():
     r = out.result
     assert out.error is None and isinstance(r, RepoAuditResult)
     it = items(r)
-    assert [it[k].label for k in ("license", "readme_leak", "tech_trace")] == [VerdictLabel.PASS] * 3
+    assert [it[k].label for k in ("license", "readme_leak", "tech_trace")] == [VerdictLabel.PRESUMED_PASS, VerdictLabel.PASS, VerdictLabel.PASS]  # ライセンスは語句の判定＝推定適合まで
     assert chips(it["license"]) == ["MIT"]
     assert chips(it["tech_trace"]) == ["Dockerfile", "requirements.txt"]  # どのファイルかだけ（パッケージ名・本文は出さない）
-    assert r.summary.verdict_counts[VerdictLabel.PASS] == 3 and r.warnings == ()
+    assert r.summary.verdict_counts[VerdictLabel.PASS] == 2 and r.summary.verdict_counts[VerdictLabel.PRESUMED_PASS] == 1 and r.warnings == ()
     assert [(f.name, f.status) for f in r.fetched] == [("README", "found"), ("LICENSE", "found"), ("Dockerfile", "found"), ("requirements.txt", "found")]
 
 
@@ -175,7 +175,7 @@ def test_unchecked_items_never_say_pass_and_labels_are_the_existing_five():
     out = audit({"LICENSE": MIT}, special={"README.md": plain("x", 500), "README": plain("x", 500)})
     r = out.result
     assert items(r)["readme_leak"].label is VerdictLabel.UNVERIFIABLE
-    assert {i.label for i in r.items} <= {VerdictLabel.PASS, VerdictLabel.FAIL, VerdictLabel.UNVERIFIABLE}
+    assert {i.label for i in r.items} <= {VerdictLabel.PASS, VerdictLabel.PRESUMED_PASS, VerdictLabel.FAIL, VerdictLabel.UNVERIFIABLE}
     assert set(r.summary.verdict_counts) == set(VerdictLabel)
 
 
@@ -236,7 +236,7 @@ def test_result_json_shape_is_what_the_screen_reads():
     assert set(d) == {"kind", "mode", "status", "preset_id", "items", "fetched", "warnings", "summary"}
     assert (d["kind"], d["mode"], d["status"], d["preset_id"]) == ("repo_audit", "LIVE", "DONE", "github_repo")
     assert [i["id"] for i in d["items"]] == ["license", "readme_leak", "tech_trace"]
-    assert d["items"][0] == {"id": "license", "title_ja": "ライセンスの表示", "label": "適合", "reason_ja": RepoReason.LICENSE_IDENTIFIED.value, "evidence": [{"label": "MIT"}]}
+    assert d["items"][0] == {"id": "license", "title_ja": "ライセンスの表示", "label": "推定適合", "reason_ja": RepoReason.LICENSE_PHRASES_PRESENT.value, "evidence": [{"label": "MIT"}]}
     assert d["fetched"][0] == {"name": "README", "status": "found"}
     assert d["warnings"][0]["code"] == "INJECTION_SUSPECTED"
     assert set(d["summary"]["verdict_counts"]) == {"適合", "不適合", "推定適合", "確認不能", "参考"}
@@ -271,7 +271,7 @@ def test_flag_on_status_lists_the_preset_with_the_agreed_shape():
 def test_judge_code_is_required_and_anonymous_never_gets_in():
     port = FakeRepoPort({"README.md": CLEAN_README})
     r, _ = run_repo(port, headers={})
-    assert r.status_code == 403 and r.json() == {"ok": False, "code": "JUDGE_REQUIRED"}
+    assert r.status_code == 403 and r.json() == {"ok": False, "code": "JUDGE_REQUIRED", "message": PUBLIC_MESSAGES[ErrorCode.JUDGE_REQUIRED]}
     r, _ = run_repo(port, headers={"x-judge": "wrong-code"})
     assert r.status_code == 403 and r.json()["code"] == "JUDGE_REQUIRED"
     r, _ = run_repo(port, headers={"x-judge": ""})
@@ -323,7 +323,7 @@ def test_happy_path_sse_order_and_result_and_zero_cost_settle():
     assert names == ["mode", "result", "done"]
     assert first(ev, "mode") == {"mode": "LIVE", "pool": "judge"}
     res = RepoAuditResult.model_validate(first(ev, "result"))
-    assert [i.label for i in res.items] == [VerdictLabel.PASS] * 3
+    assert [i.label for i in res.items] == [VerdictLabel.PRESUMED_PASS, VerdictLabel.PASS, VerdictLabel.PASS]
     assert all("raw.githubusercontent.com/example-owner/example-repo/HEAD/" in u for u in port.requests)
     total = next(v for k, v in store.docs.items() if k.endswith("/total"))
     assert total["reservations"] == {} and total["spent"]["judge"] == 0  # 費用 0 で精算

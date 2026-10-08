@@ -760,19 +760,44 @@ class RepoItemTitle(StrEnum):
 class RepoReason(StrEnum):
     """理由の固定文（リポの中身・URL・数値を埋め込まない。件数は証拠のチップで示す）。"""
 
-    LICENSE_IDENTIFIED = "LICENSE の文面が、標準のライセンス文と一致しました。リポジトリ全体への適用までは確かめていません。"
+    LICENSE_PHRASES_PRESENT = "LICENSE に、標準のライセンスに特徴的な語句がそろっています。全文の一致と、リポジトリ全体への適用は確かめていません。"
     LICENSE_UNKNOWN = "ライセンスのファイルはありますが、種類を判定できません。ご自身で確認してください。"
     LICENSE_MISSING = "ライセンスのファイルが見つかりません。"
     LEAK_FOUND = "READMEに、公開してはいけない情報の形が見つかりました。種類と件数は証拠のとおりです。"
     LEAK_NONE = "READMEの走査では、公開してはいけない情報の形は見つかりませんでした。走査したのはREADMEだけです。"
     README_MISSING = "READMEが見つからないため、確かめていません。"
+    README_EMPTY = "READMEは見つかりましたが、中身が空のため、確かめていません。"
     TECH_FOUND = "Google Cloud の AI 関連の固定辞書にあるパッケージの記載が見つかりました。どのファイルかは証拠のとおりです。"
     TECH_NOT_SEEN = "取得できたファイルに、固定辞書の記載は見つかりませんでした。この点検では、ほかの書き方での利用は見分けられません。"
+    TECH_NO_FILES = "Dockerfile も requirements.txt も見つからないため、確かめていません。この点検では、ほかの書き方での利用は見分けられません。"
     UNCHECKED_RATE_LIMITED = "GitHub の回数制限で、いまは確かめられません。"
     UNCHECKED_TRANSIENT = "一時的な失敗で取得できず、確かめていません。"
     UNCHECKED_REJECTED = "取得が許可されなかったため、確かめていません。"
     UNCHECKED_UNUSABLE = "ファイルが大きすぎるか、テキストでないため、確かめていません。"
     UNCHECKED_SKIPPED = "取得しなかったため、確かめていません。"
+    UNCHECKED_NO_FACT = "点検の結果を得られなかったため、確かめていません。"
+
+
+_UNCHECKED_REASONS = frozenset(r for r in RepoReason if r.name.startswith("UNCHECKED_"))
+# 項目ごとに言ってよい理由（それ以外の組み合わせは作れない）
+REPO_ITEM_REASONS: dict[RepoItemId, frozenset[RepoReason]] = {
+    RepoItemId.LICENSE: frozenset({RepoReason.LICENSE_PHRASES_PRESENT, RepoReason.LICENSE_UNKNOWN, RepoReason.LICENSE_MISSING}) | _UNCHECKED_REASONS,
+    RepoItemId.README_LEAK: frozenset({RepoReason.LEAK_FOUND, RepoReason.LEAK_NONE, RepoReason.README_MISSING, RepoReason.README_EMPTY}) | _UNCHECKED_REASONS,
+    RepoItemId.TECH_TRACE: frozenset({RepoReason.TECH_FOUND, RepoReason.TECH_NOT_SEEN, RepoReason.TECH_NO_FILES}) | _UNCHECKED_REASONS,
+}
+# 証拠のチップに載せてよい語彙（項目ごと）。ライセンスの識別子は checks.repo_inspect.LicenseKind、走査の種類名は leak_scan.LEAK_PATTERNS と
+# 同じ（contracts は checks に依存できないので、ここに持ち、tests/test_repo_audit.py が一致を固定する）。
+REPO_LICENSE_IDS: tuple[str, ...] = (
+    "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "GPL-2.0", "GPL-3.0", "LGPL-3.0", "AGPL-3.0", "MPL-2.0", "ISC", "Unlicense",
+)  # fmt: skip
+REPO_LEAK_KINDS: tuple[str, ...] = (
+    "email", "service_account", "google_api_key", "oauth_token", "private_key", "github_token", "aws_key_id", "private_ip",
+)  # fmt: skip
+REPO_EVIDENCE_VOCAB: dict[RepoItemId, frozenset[str]] = {
+    RepoItemId.LICENSE: frozenset(REPO_LICENSE_IDS),
+    RepoItemId.README_LEAK: frozenset(REPO_LEAK_KINDS) | {"README"},
+    RepoItemId.TECH_TRACE: frozenset({"Dockerfile", "requirements.txt"}),
+}
 
 
 REPO_EVIDENCE_CHIP = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,39}(?: ×[1-9][0-9]{0,5})?")
@@ -792,7 +817,7 @@ class RepoEvidence(_Frozen):
 
 
 class RepoItem(_Frozen):
-    """点検の1項目。ラベルは既存の5種のうち適合・不適合・確認不能だけを使う。"""
+    """点検の1項目。ラベルは既存の5種のうち適合・推定適合・不適合・確認不能だけを使う（ライセンスの項目は適合を出せない）。"""
 
     id: RepoItemId
     title_ja: RepoItemTitle
@@ -804,10 +829,18 @@ class RepoItem(_Frozen):
     def _consistent(self) -> "RepoItem":
         if self.title_ja.name != self.id.name:
             raise ValueError("題名が項目と合いません")
+        if self.reason_ja not in REPO_ITEM_REASONS[self.id]:
+            raise ValueError("この項目で言ってよい理由ではありません")
         if self.label in (VerdictLabel.PASS, VerdictLabel.PRESUMED_PASS) and not self.evidence:
-            raise ValueError("適合には証拠が要ります")
+            raise ValueError("適合・推定適合には証拠が要ります")
         if self.label is VerdictLabel.REFERENCE:
             raise ValueError("この点検に参考はありません")
+        if self.id is RepoItemId.LICENSE and self.label is VerdictLabel.PASS:
+            raise ValueError("ライセンスは語句の判定なので、適合は出せません（推定適合まで）")
+        vocab = REPO_EVIDENCE_VOCAB[self.id]
+        for e in self.evidence:
+            if e.label.split(" ×")[0] not in vocab:
+                raise ValueError("この項目の証拠にできない語です")
         return self
 
 

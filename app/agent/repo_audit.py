@@ -6,6 +6,7 @@
 モデルは呼ばない・渡さない（このモジュールは model を import しない）。リポの文面・URL は結果にもログにも持ち込まない（種類と件数だけ）。
 Planner がファイルを選ぶ形・要項の要件への結びつけは、ここにはない（今後）。
 """
+import asyncio
 from dataclasses import dataclass
 
 from app.adjudicate import RepoFacts, adjudicate_repo
@@ -46,11 +47,8 @@ def failure_code(fetched: RepoFetchResult) -> ErrorCode | None:
     return None  # 大きすぎる・テキストでない・取得しなかった: 取れていないことを項目ごとの確認不能で示す
 
 
-async def audit_repo(ref: RepoRef, port: FetchPort) -> RepoAuditOutcome:
-    fetched = await fetch_repo_files(ref, port)
-    code = failure_code(fetched)
-    if code is not None:
-        return RepoAuditOutcome(error=code)
+def _inspect_sync(fetched: RepoFetchResult) -> RepoAuditResult:
+    """デコード・走査・判定（CPU を使う同期処理。最大サイズの README で 2〜3 秒かかるので、別スレッドで走らせる）。"""
     readme, lic, docker, reqs = (_text(f) for f in fetched.files)
     statuses = {name: f.status.value for name, f in zip(_NAMES, fetched.files, strict=True)}
     facts = RepoFacts(
@@ -59,4 +57,14 @@ async def audit_repo(ref: RepoRef, port: FetchPort) -> RepoAuditOutcome:
         readme=scan_readme(readme) if readme is not None else None,
         tech=tech_traces(docker, reqs),
     )
-    return RepoAuditOutcome(result=adjudicate_repo(facts))
+    return adjudicate_repo(facts)
+
+
+async def audit_repo(ref: RepoRef, port: FetchPort) -> RepoAuditOutcome:
+    fetched = await fetch_repo_files(ref, port)
+    code = failure_code(fetched)
+    if code is not None:
+        return RepoAuditOutcome(error=code)
+    # 同期の CPU 処理はイベントループを止めるので別スレッドへ出す（他のリクエスト・SSE のハートビートを止めない）。
+    # 取り消し（切断・期限切れ）で待つ側が消えても、スレッドは走り切って結果を捨てるだけ（外へ出る通信も保存も無い純関数なので害は無い）。
+    return RepoAuditOutcome(result=await asyncio.to_thread(_inspect_sync, fetched))

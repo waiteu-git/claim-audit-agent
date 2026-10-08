@@ -452,6 +452,8 @@ def startup_violations(
         early.append("GITHUB_INPUT_ENABLED は ROLE=agent（S2）だけで使う設定です")
     if settings.github_input_enabled and not settings.judge_code_sha256:
         early.append("GITHUB_INPUT_ENABLED には JUDGE_CODE_SHA256 が必要です（審査員コード専用の入口で、コードが無いと誰も使えません）")
+    if settings.github_input_enabled and settings.fetcher_url is None and (settings.fetch_backend is FetchBackend.REMOTE or settings.env is EnvName.PUBLIC):
+        early.append("GITHUB_INPUT_ENABLED には FETCHER_URL が必要です（取得は取得専用サービス S3 に任せます）")
     if settings.env is not EnvName.PUBLIC:
         return early
     env = os.environ if environ is None else environ

@@ -11,7 +11,7 @@ import traceback
 from datetime import UTC, datetime
 from typing import IO, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.contracts import Decision, PolicyId, TraceEvent, TraceType
 from app.errors import classify
@@ -101,15 +101,30 @@ def log_event(event: str, *, severity: str = "INFO", **fields: Any) -> None:
     logging.getLogger(LOGGER_NAME).log(getattr(logging, severity.upper()), event, extra={"fields": fields})
 
 
+def _safe_validation_detail(exc: ValidationError) -> str:
+    """pydantic の検証失敗 → 「フィールド名: エラー種別」だけ。str(exc) は失敗した値の抜粋（input_value＝取得した本文の先頭など）を含む。"""
+    errs = exc.errors(include_input=False, include_url=False, include_context=False)
+    return "; ".join(f"{'.'.join(str(x) for x in e['loc'])}:{e['type']}" for e in errs)[:500]
+
+
 def log_exception(event: str, exc: BaseException, **fields: Any) -> None:
-    """例外を非公開ログへ。error_code だけが公開面へ出してよい値で、detail / traceback はここにだけ書く。"""
+    """例外を非公開ログへ。error_code だけが公開面へ出してよい値で、detail / traceback はここにだけ書く。
+
+    ValidationError は値（input_value）を含む文面を持つので、detail と traceback の末尾にはフィールド名とエラー種別だけを書く。
+    """
+    if isinstance(exc, ValidationError):
+        detail = _safe_validation_detail(exc)
+        tb = "".join(traceback.format_tb(exc.__traceback__))[-2000:] + f"{type(exc).__name__}: {detail}"
+    else:
+        detail = str(exc)
+        tb = "".join(traceback.format_exception(exc))[-2000:]
     log_event(
         event,
         severity="ERROR",
         error_code=classify(exc).value,
         error_type=type(exc).__name__,
-        detail=str(exc),
-        traceback="".join(traceback.format_exception(exc))[-2000:],
+        detail=detail,
+        traceback=tb,
         **fields,
     )
 

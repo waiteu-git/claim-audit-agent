@@ -694,19 +694,20 @@ class RepoFacts:
 
 
 def _unchecked(*statuses: str) -> RepoReason:
-    """found でも not_found でもない状態のうち、最も強いものの固定文。"""
+    """found でも not_found でもない状態のうち、最も強いものの固定文。該当が無ければ「結果を得られなかった」（事実が欠けている）。"""
     for st in _UNCHECKED_ORDER:
         if st in statuses:
             return _UNCHECKED_REASON[st]
-    return RepoReason.UNCHECKED_SKIPPED
+    return RepoReason.UNCHECKED_NO_FACT
 
 
 def _repo_license(f: RepoFacts) -> RepoItem:
+    """ライセンス: 語句の判定は全文の照合ではない（改変した文を見分けられない）ので、確信できても「推定適合」まで。適合は出さない。"""
     st = f.statuses["LICENSE"]
     title = RepoItemTitle.LICENSE
     if st == "found" and f.license is not None and f.license.present:
         if f.license.identified:
-            return RepoItem(id=RepoItemId.LICENSE, title_ja=title, label=VerdictLabel.PASS, reason_ja=RepoReason.LICENSE_IDENTIFIED,
+            return RepoItem(id=RepoItemId.LICENSE, title_ja=title, label=VerdictLabel.PRESUMED_PASS, reason_ja=RepoReason.LICENSE_PHRASES_PRESENT,
                             evidence=(RepoEvidence(label=f.license.kind.value),))  # fmt: skip
         return RepoItem(id=RepoItemId.LICENSE, title_ja=title, label=VerdictLabel.UNVERIFIABLE, reason_ja=RepoReason.LICENSE_UNKNOWN)
     if st == "not_found":
@@ -718,6 +719,8 @@ def _repo_readme(f: RepoFacts) -> RepoItem:
     st = f.statuses["README"]
     title = RepoItemTitle.README_LEAK
     if st == "found" and f.readme is not None and f.readme.present:
+        if f.readme.empty:  # 何も走査していない＝漏洩なしとは言えない
+            return RepoItem(id=RepoItemId.README_LEAK, title_ja=title, label=VerdictLabel.UNVERIFIABLE, reason_ja=RepoReason.README_EMPTY)
         if f.readme.leak_total > 0:
             chips = tuple(RepoEvidence(label=f"{kind} ×{n}") for kind, n in f.readme.leak_counts)
             return RepoItem(id=RepoItemId.README_LEAK, title_ja=title, label=VerdictLabel.FAIL, reason_ja=RepoReason.LEAK_FOUND, evidence=chips)
@@ -736,7 +739,14 @@ def _repo_tech(f: RepoFacts) -> RepoItem:
         return RepoItem(id=RepoItemId.TECH_TRACE, title_ja=title, label=VerdictLabel.PASS, reason_ja=RepoReason.TECH_FOUND, evidence=chips)
     states = (f.statuses["Dockerfile"], f.statuses["requirements.txt"])
     bad = [s for s in states if s not in ("found", "not_found")]
-    reason = _unchecked(*bad) if bad else RepoReason.TECH_NOT_SEEN  # 痕跡なしは「無い」ではなく「この点検では見えなかった」＝確認不能
+    if bad:
+        reason = _unchecked(*bad)
+    elif tech is None and "found" in states:
+        reason = RepoReason.UNCHECKED_NO_FACT  # 取れたのに事実が無い（不整合）。「見えなかった」とは言わない
+    elif states == ("not_found", "not_found"):
+        reason = RepoReason.TECH_NO_FILES
+    else:
+        reason = RepoReason.TECH_NOT_SEEN  # 痕跡なしは「無い」ではなく「この点検では見えなかった」＝確認不能
     return RepoItem(id=RepoItemId.TECH_TRACE, title_ja=title, label=VerdictLabel.UNVERIFIABLE, reason_ja=reason)
 
 

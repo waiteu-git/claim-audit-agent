@@ -18,7 +18,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.checks.leak_scan import LEAK_PATTERNS, scan_text
+from app.checks.leak_scan import LEAK_PATTERNS
 from app.ingest.inject_scan import scan as scan_injection
 from app.ingest.sanitize import decode_body
 
@@ -247,6 +247,7 @@ def detect_license(text: str | None) -> LicenseFact:
 # ---------------------------------------------------------------------------
 class ReadmeFact(_Fact):
     present: bool
+    empty: bool = False  # 有るが、空・空白だけ（何も走査していない＝「漏洩なし」と言えない）
     leak_counts: tuple[tuple[str, Annotated[int, Field(ge=1)]], ...] = ()  # (leak_scan.LEAK_PATTERNS の種類名, 件数)。名前順。見つけた文字列は持たない
     injection_suspicions: int = Field(default=0, ge=0)  # ingest.inject_scan の定義で数えた偽の命令の疑い（件数のみ）
 
@@ -256,8 +257,10 @@ class ReadmeFact(_Fact):
         names = [k for k, _ in self.leak_counts]
         if any(k not in LEAK_PATTERNS for k in names) or len(set(names)) != len(names):
             raise ValueError("leak_counts の種類名は LEAK_PATTERNS のものを1度ずつ")
-        if not self.present and (self.leak_counts or self.injection_suspicions):
+        if not self.present and (self.leak_counts or self.injection_suspicions or self.empty):
             raise ValueError("README が無いのに件数は持てません")
+        if self.empty and (self.leak_counts or self.injection_suspicions):
+            raise ValueError("空の README は件数を持てません")
         return self
 
     @property
@@ -266,52 +269,86 @@ class ReadmeFact(_Fact):
 
 
 _LEAK_CHUNK_CHARS = 1024  # leak_scan の email・service_url の正規表現は、区切りの無い長い連なりで入力長の2乗かかる（20,000字で数秒）
+_LEAK_OVERLAP_CHARS = 256  # 空白の無い長い語を固定長で切る時の重なり。漏洩の1件（鍵・メールの見出し）は数百字以内なので、切れ目をまたいでも拾える
 
 
 def _leak_chunks(text: str):  # noqa: ANN202
-    """走査の塊。行（改行）単位でまとめ、長い行は空白で、空白の無い長い語は固定長で切る。漏洩の1件（メール・URL・鍵の見出し）は
-    数百字以内なので、通常の README では塊の境目をまたがない。2乗の時間を、塊の長さの2乗 × 塊の数に抑える。"""
+    """走査の塊 (本文, 数える範囲の長さ)。行（改行）単位でまとめ、長い行は空白で、空白の無い長い語は固定長で切る。
+
+    ふつうの塊は全体を数える（範囲 = 本文の長さ）。空白の無い長い語を固定長で切る時だけ、次の塊の先頭 256 字を重ねて持ち
+    （本文 = 範囲 + 重なり）、範囲の中で始まる一致だけを数える＝切れ目をまたぐ 1 件を拾い、重なりの中の一致を二重に数えない。
+    2乗の時間は、塊の長さの2乗 × 塊の数に抑える。
+    """
     buf: list[str] = []
     size = 0
     for line in text.split("\n"):
         if len(line) > _LEAK_CHUNK_CHARS:
             if buf:
-                yield "\n".join(buf)
+                joined = "\n".join(buf)
+                yield joined, len(joined)
                 buf, size = [], 0
             piece = ""
             for token in re.split(r"(\s+)", line):
-                while len(token) > _LEAK_CHUNK_CHARS:  # 空白の無い長い語は固定長で切る（境目をまたぐ1件は拾えない＝既知の限界）
+                while len(token) > _LEAK_CHUNK_CHARS:
                     if piece:
-                        yield piece
+                        yield piece, len(piece)
                         piece = ""
-                    yield token[:_LEAK_CHUNK_CHARS]
+                    yield token[: _LEAK_CHUNK_CHARS + _LEAK_OVERLAP_CHARS], _LEAK_CHUNK_CHARS
                     token = token[_LEAK_CHUNK_CHARS:]
                 if len(piece) + len(token) > _LEAK_CHUNK_CHARS and piece:
-                    yield piece
+                    yield piece, len(piece)
                     piece = ""
                 piece += token
             if piece:
-                yield piece
+                yield piece, len(piece)
             continue
         if size + len(line) + 1 > _LEAK_CHUNK_CHARS and buf:
-            yield "\n".join(buf)
+            joined = "\n".join(buf)
+            yield joined, len(joined)
             buf, size = [], 0
         buf.append(line)
         size += len(line) + 1
     if buf:
-        yield "\n".join(buf)
+        joined = "\n".join(buf)
+        yield joined, len(joined)
+
+
+# 前に伸ばす部分には長さの上限を置く（区切りの無い長い連なりで入力長の2乗にならないように）。
+# README に普通に書かれる、公開してはいけない情報ではない形。README の走査だけで件数から除く（leak_scan 本体は変えない＝
+# 提出物の検査の挙動は不変）。除いた所は空白に置き換える（前後がつながって新しい一致を作らない）。秘密の形（鍵・トークン・秘密鍵の見出し）・
+# 実際のメールアドレス・私的アドレスは、ここに入れない。
+_HARMLESS_ADDR = r"[A-Za-z0-9._%+\-]"
+_HARMLESS = (
+    re.compile(r"\bgit@[A-Za-z0-9.\-]{1,255}:[A-Za-z0-9_./~\-]{0,255}"),  # SSH のクローン先（git@host:owner/repo.git）
+    re.compile(_HARMLESS_ADDR + r"{0,64}no-?reply" + _HARMLESS_ADDR + r"{0,64}@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*", re.I),  # noreply の送信専用アドレス
+    re.compile(_HARMLESS_ADDR + r"{1,64}@(?:[A-Za-z0-9\-]+\.)*no-?reply(?:\.[A-Za-z0-9\-]+)+", re.I),  # users.noreply.… などのドメイン
+    re.compile(r"[A-Za-z0-9._\-]{1,64}@[1-9]x\.(?:png|jpe?g|gif|webp|svg|avif|bmp)\b", re.I),  # 画像の倍率つきファイル名（名前の後ろに 2x などの倍率が付く形）
+)
+# 公開の README に書かれる、サーバーレス実行環境の公開 URL。README の走査では数えない（提出物の検査では従来どおり数える）。
+_README_IGNORED_KINDS = frozenset({"service_url"})
+
+
+def _strip_harmless(text: str) -> str:
+    for pat in _HARMLESS:
+        text = pat.sub(" ", text)
+    return text
 
 
 def _leak_counts(text: str) -> dict[str, int]:
-    """leak_scan.scan_text（定義はそのまま）を塊ごとに呼んで足す。
+    """leak_scan.LEAK_PATTERNS（定義はそのまま）で塊ごとに数えて足す。NFKC に畳むのも scan_text と同じ。
 
-    private_key の見出しだけは空白を含み、塊の境目で切れうる。この正規表現は線形なので、全体に掛けて数える
-    （パターンは leak_scan.LEAK_PATTERNS のもの。NFKC に畳むのも scan_text と同じ）。他の種類は空白を含まないので塊に分けてよい。
+    private_key の見出しだけは空白を含み、塊の境目で切れうる。この正規表現は線形なので、全体に掛けて数える。
+    他の種類は空白を含まないので塊に分けてよい。
     """
     total: dict[str, int] = {}
-    for chunk in _leak_chunks(text):
-        for kind, n in scan_text(chunk).items():
-            if kind != "private_key":
+    for chunk, core in _leak_chunks(text):
+        flat = unicodedata.normalize("NFKC", chunk)
+        core_flat = len(unicodedata.normalize("NFKC", chunk[:core])) if core < len(chunk) else len(flat)
+        for kind, pat in LEAK_PATTERNS.items():
+            if kind == "private_key" or kind in _README_IGNORED_KINDS:
+                continue
+            n = sum(1 for m in pat.finditer(flat) if m.start() < core_flat)
+            if n:
                 total[kind] = total.get(kind, 0) + n
     n_key = len(LEAK_PATTERNS["private_key"].findall(unicodedata.normalize("NFKC", text)))
     if n_key:
@@ -330,7 +367,9 @@ def scan_readme(text: str | None) -> ReadmeFact:
     if text is None:
         return ReadmeFact(present=False)
     body = text[:MAX_ANALYZE_CHARS]
-    counts = _leak_counts(body)
+    if not body.strip():
+        return ReadmeFact(present=True, empty=True)
+    counts = _leak_counts(_strip_harmless(body))
     return ReadmeFact(
         present=True,
         leak_counts=tuple(sorted(counts.items())),
@@ -391,7 +430,38 @@ def _requirement_hits(text: str | None) -> frozenset[str]:
 # 命令の先頭が pip install（python -m pip・uv pip・sudo 付きも）か uv add のときだけ、引数を要件として読む。
 # `echo pip install x`・`apt-get install x`・`pip download x` は読まない（先頭の語で決める）。
 _PIP_START = re.compile(r"\s*(?:sudo\s+)?(?:(?:python[\d.]*|py)\s+-m\s+)?(?:(?:uv\s+)?pip[\d.]*\s+install|uv\s+add)\b", re.I)
-_SHELL_SPLIT = re.compile(r"&&|\|\||[;|&]")
+
+
+def _split_commands(line: str) -> list[str]:
+    """引用符の外の && || ; | & で命令を分ける。引用符の中の「; pip install …」は命令ではない（引数の文字列）。"""
+    parts: list[str] = []
+    buf: list[str] = []
+    quote = ""
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < len(line):
+                buf.append(line[i : i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+        elif ch in ";|&":
+            parts.append("".join(buf))
+            buf = []
+            if line[i : i + 2] in ("&&", "||"):
+                i += 1
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    parts.append("".join(buf))
+    return parts
+
+
 # 値を1つ取るオプション（その値を要件として読まない: `--target vertexai` の vertexai はディレクトリ名）
 _PIP_VALUE_OPTIONS = frozenset({
     "-r", "--requirement", "-c", "--constraint", "-t", "--target", "--prefix", "--root", "-i", "--index-url", "--extra-index-url",
@@ -457,7 +527,7 @@ def _dockerfile_hits(text: str | None) -> frozenset[str]:
         return frozenset()
     hits: set[str] = set()
     for body in _dockerfile_run_lines(text):
-        for part in _SHELL_SPLIT.split(_strip_shell_comment(body)):
+        for part in _split_commands(_strip_shell_comment(body)):
             m = _PIP_START.match(part)
             if m is None:
                 continue
