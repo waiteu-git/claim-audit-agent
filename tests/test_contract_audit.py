@@ -402,7 +402,7 @@ def test_model_quote_escaped_for_display_fits_a_quote_step():
 
 
 # ---------------------------------------------------------------------------
-# 終端の理由（§3: DEGRADED = 予算切れ・Vertex 失敗・拒否3連続／ABORTED = kill・切断・75秒超過）
+# 終端の理由（§3: DEGRADED = 予算切れ・Vertex 失敗・拒否3連続／ABORTED = kill・切断・壁時計超過）
 # ---------------------------------------------------------------------------
 def test_run_record_end_reasons_match_the_terminal_status():
     assert make_record().degraded_reason is None and make_record().aborted_reason is None  # DONE は理由を持たない

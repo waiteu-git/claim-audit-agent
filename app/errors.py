@@ -17,7 +17,7 @@ class ErrorCode(StrEnum):
     FATAL_CONFIG = "FATAL_CONFIG"  # 400 / 401 / 403 / 404。設定の誤り。即中断＋kill_live 自動 true
     # それ以外
     KILLED = "KILLED"  # キルスイッチ（L1/L2）
-    CANCELLED = "CANCELLED"  # クライアント切断・75秒超過による中止
+    CANCELLED = "CANCELLED"  # クライアント切断・壁時計の上限超過による中止
     SCHEMA_VIOLATION = "SCHEMA_VIOLATION"  # モデル出力が契約（pydantic）に合わない
     INVALID_INPUT = "INVALID_INPUT"  # 入力（プリセットID・ツール引数）が不正
     FETCH_BLOCKED = "FETCH_BLOCKED"  # SafeFetch がスコープ・SSRF 規則で拒否

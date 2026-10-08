@@ -362,7 +362,7 @@ class AbortReason(StrEnum):
 
     KILL = "KILL"  # キルスイッチ
     CLIENT_DISCONNECT = "CLIENT_DISCONNECT"  # クライアント切断
-    WALL_CLOCK = "WALL_CLOCK"  # 75秒超過
+    WALL_CLOCK = "WALL_CLOCK"  # 壁時計の上限（RUN_CAPS.wall_clock_s）超過
 
 
 class RunMode(StrEnum):

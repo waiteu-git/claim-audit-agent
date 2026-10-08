@@ -20,6 +20,7 @@
     BUDGET: "費用の上限に達しました",
     STORE_UNAVAILABLE: "枠の記録に接続できません",
     NOT_LIVE_PRESET: "このプリセットは保存済みの実行だけです",
+    LIVE_TIMEOUT: "ライブ実行が時間内に終わりませんでした",
   };
   const VERDICT = {
     "適合": ["v-pass", "✓"],
@@ -236,6 +237,12 @@
   }
 
   function onMode(m) {
+    if (m.switched) {
+      // ライブが時間内に終わらず、実行の途中で保存済みの実行へ切り替わった。途中までの表示は捨てて、保存済みの実行を最初から出す
+      resetResult();
+      $("run-mode").textContent = "ライブ実行が時間内に終わらなかったため、保存済みの実行を表示しています。";
+      return;
+    }
     if (m.mode === "LIVE") {
       $("run-mode").textContent = "ライブ実行（この場で要項を読み、提出物を検査しています）";
     } else {

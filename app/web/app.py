@@ -12,13 +12,16 @@ POST /api/run の守り（上から順に）:
   2. 本文は JSON・4KB 以下・{"preset_id"} だけ。プリセット ID 以外は 400
   3. ADMIT 前段のゲート（1試行/秒）→ 429。枠・キルスイッチ・上限の判断は quota.QuotaService（LIVE か REPLAY か）
   4. LIVE: 実行をタスクで走らせ、トレースを SSE で流す。10秒ごとにハートビート。切断されたら実行を取り消し、予約は最悪値で精算
-     （応答が戻らない呼び出しの費用は分からない＝安全側）。完了したら実費（トレースの見積もり）で精算
+     （応答が戻らない呼び出しの費用は分からない＝安全側）。完了したら実費（トレースの見積もり）で精算。
+     ライブが時間内に終わらなかった時（壁時計の上限での中断、または実行の外側の期限）は、判定のない中断の画面を出さず、
+     mode（REPLAY・理由 LIVE_TIMEOUT・switched）を送って保存済みの実行へ切り替える（そのプリセットの同梱記録がある時だけ）
   5. REPLAY: 同梱の実行記録（app/web/replay/）を流す。Vertex・Firestore に依存しない
 SSE のイベント: mode（LIVE/REPLAY と理由）・trace（TraceEvent）・result（RunRecord）・error（ErrorCode と固定文だけ）・done。
 例外の中身（str(e)・スタックトレース）は応答に出さない（非公開ログだけ）。
 """
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,11 +44,14 @@ from app.config import (
     build_presets,
     get_settings,
 )
-from app.contracts import FetchPort, Preset, TraceEvent
+from app.contracts import AbortReason, FetchPort, Preset, RunRecord, RunStatus, TraceEvent
 from app.egress_guard import EgressGuard
 from app.errors import ErrorCode, PublicError, classify
 from app.fixtures.site import FixtureSite
 from app.jsonlog import log_event, log_exception
+from app.model.port import ModelPort
+from app.model.retry import RetryingPort
+from app.model.wallbound import WallBoundPort
 from app.quota import Admission, AdmitRejected, InMemoryState, QuotaService, ReplayReason, StatePort
 from app.web.replay import ReplayBundle, load_replays
 
@@ -65,6 +71,9 @@ JUDGE_HEADER = "x-judge"
 
 LiveRunner = Callable[[Preset, Callable[[TraceEvent], None]], Awaitable[RunResult]]
 
+CLOUD_RUN_TIMEOUT_S = 120.0  # deploy.sh の --timeout（SSE の応答も、受付から終わりまでこの中）
+SWITCH_RESERVE_S = 12.0  # 外側の期限の後に要る分: 取り消しの後始末（最大1秒）・切り替えの再生（約1.5秒）・精算・通信の余裕
+
 
 @dataclass
 class WebDeps:
@@ -75,7 +84,7 @@ class WebDeps:
     replays: dict[str, ReplayBundle]
     replay_delay_s: float = 0.03
     heartbeat_s: float = GUARD_LIMITS.sse_heartbeat_s
-    run_timeout_s: float = RUN_CAPS.wall_clock_s + 15.0
+    run_timeout_s: float = RUN_CAPS.wall_clock_s + 10.0  # Cloud Run の timeout（120 秒）の内側。切り替えの再生の分（数秒）を残す
 
 
 def sse(event: str, data: str) -> bytes:
@@ -103,14 +112,20 @@ def _build_fetch(settings: Settings, preset: Preset) -> FetchPort:
     return SafeFetch(preset.allowed_prefixes)
 
 
+def bound_model(port: ModelPort, *, deadline_monotonic: float) -> ModelPort:
+    """再試行（壁時計の締切で止める）を、壁時計の内側に収める。応答の遅い時間帯に、呼び出し中のまま外側の期限へ当たらないように。"""
+    retrying = RetryingPort(port, retries=RUN_CAPS.model_retries, backoff_s=RUN_CAPS.retry_backoff_s, deadline_monotonic=deadline_monotonic)
+    return WallBoundPort(retrying, deadline_monotonic=deadline_monotonic)
+
+
 def default_live_runner(settings: Settings) -> LiveRunner:  # pragma: no cover - Vertex を呼ぶ（テストは注入する）
     async def run(preset: Preset, sink: Callable[[TraceEvent], None]) -> RunResult:
         from app.model.gemini import GeminiPort
-        from app.model.retry import RetryingPort
 
-        def model(model_id: str) -> RetryingPort:
-            return RetryingPort(GeminiPort.from_settings(settings, model_id=model_id), retries=RUN_CAPS.model_retries,
-                                backoff_s=RUN_CAPS.retry_backoff_s)  # fmt: skip
+        deadline = time.monotonic() + RUN_CAPS.wall_clock_s  # BudgetMeter の起点とのずれは、WallBoundPort の余裕（2秒）に収まる
+
+        def model(model_id: str) -> ModelPort:
+            return bound_model(GeminiPort.from_settings(settings, model_id=model_id), deadline_monotonic=deadline)
 
         return await run_audit(
             preset,
@@ -144,14 +159,49 @@ def default_deps(settings: Settings) -> WebDeps:  # pragma: no cover - 本番の
 
 
 # ---- SSE の流れ ----------------------------------------------------------------------------------
-async def live_events(deps: WebDeps, preset: Preset, adm: Admission) -> AsyncIterator[bytes]:
-    """LIVE の SSE。切断（aclose・取り消し）されたら実行を取り消し、予約を最悪値で精算する。"""
+SWITCH_REPLAY_DELAY_S = 0.01  # 実行の途中で保存済みの実行へ切り替えた時の流す間隔（利用者はすでに待った。timeout の残りも小さい）
+
+
+def _live_overran(rec: RunRecord) -> bool:
+    """ライブが壁時計の上限で中断した記録か（判定のない中断。保存済みの実行へ切り替える対象）。"""
+    return rec.status is RunStatus.ABORTED and rec.aborted_reason is AbortReason.WALL_CLOCK
+
+
+async def _replay_body(bundle: ReplayBundle, delay_s: float) -> AsyncIterator[bytes]:
+    """同梱の実行記録の trace と result（mode と done は呼び出し側が送る）。"""
+    for ev in bundle.event_jsons:
+        if delay_s:
+            await asyncio.sleep(delay_s)
+        yield sse("trace", ev)
+    yield sse("result", bundle.record_json)
+
+
+def run_budget_s(deps: WebDeps, t_request: float, now: float) -> float:
+    """ライブの実行に与える外側の期限（秒）。受付から Cloud Run の timeout までの間に、切り替えの分（SWITCH_RESERVE_S）を残す。"""
+    return min(deps.run_timeout_s, max(1.0, CLOUD_RUN_TIMEOUT_S - SWITCH_RESERVE_S - (now - t_request)))
+
+
+async def live_events(deps: WebDeps, preset: Preset, adm: Admission, t_request: float | None = None) -> AsyncIterator[bytes]:
+    """LIVE の SSE。切断（aclose・取り消し）されたら実行を取り消し、予約を最悪値で精算する。
+
+    ライブが時間内に終わらなかった時（壁時計の上限での中断、または実行の外側の期限）は、そのプリセットの同梱記録があれば
+    mode（REPLAY・LIVE_TIMEOUT・switched）を送って保存済みの実行へ切り替える。中断の結果（判定のない画面）は送らない。
+    """
     queue: asyncio.Queue[TraceEvent] = asyncio.Queue()
+    outer_expired = False  # 実行の外側の期限で打ち切った
+    budget_s = run_budget_s(deps, t_request if t_request is not None else time.monotonic(), time.monotonic())
 
     async def run() -> RunResult:
-        async with asyncio.timeout(deps.run_timeout_s):
-            return await deps.run_live(preset, queue.put_nowait)
+        nonlocal outer_expired
+        limit = asyncio.timeout(budget_s)
+        try:
+            async with limit:
+                return await deps.run_live(preset, queue.put_nowait)
+        except TimeoutError:
+            outer_expired = limit.expired()  # 内側が自分で投げた TimeoutError とは区別する
+            raise
 
+    bundle = deps.replays.get(preset.preset_id)
     task = asyncio.ensure_future(run())
     getter: asyncio.Future | None = None
     settled = False
@@ -171,6 +221,7 @@ async def live_events(deps: WebDeps, preset: Preset, adm: Admission) -> AsyncIte
                     yield sse("trace", queue.get_nowait().model_dump_json(exclude_none=True))
                 break
             yield HEARTBEAT
+        switch = False  # 保存済みの実行へ切り替える（同梱記録がある時だけ）
         try:
             res = task.result()
         except Exception as e:  # noqa: BLE001  公開してよいのは ErrorCode と固定文だけ
@@ -178,11 +229,27 @@ async def live_events(deps: WebDeps, preset: Preset, adm: Admission) -> AsyncIte
             log_exception("web.run_failed", e)
             if code is ErrorCode.FATAL_CONFIG:
                 await deps.quota.trip_kill()
-            yield sse("error", PublicError.from_code(code).model_dump_json())
+            if outer_expired and bundle is not None:
+                switch = True  # 費用は分からない＝finally が予約の最悪値で精算する
+            else:
+                yield sse("error", PublicError.from_code(code).model_dump_json())
         else:
-            yield sse("result", report_json(res.record))
-            await deps.quota.settle(adm, res.record.summary.est_cost_micro_jpy)
-            settled = True
+            if bundle is not None and _live_overran(res.record):
+                switch = True
+                try:
+                    await deps.quota.settle(adm, res.record.summary.est_cost_micro_jpy)  # 使った分（実費）で精算する
+                    settled = True
+                except Exception as e:  # noqa: BLE001  精算の失敗で、利用者への切り替えを落とさない（finally が最悪値で精算し直す）
+                    log_exception("web.settle_failed", e)
+            else:
+                yield sse("result", report_json(res.record))
+                await deps.quota.settle(adm, res.record.summary.est_cost_micro_jpy)
+                settled = True
+        if switch and bundle is not None:
+            log_event("web.live_timeout_fallback", severity="WARNING", preset_id=preset.preset_id, outer=outer_expired)
+            yield sse("mode", _json({"mode": "REPLAY", "reason": ReplayReason.LIVE_TIMEOUT.value, "available": True, "switched": True}))
+            async for chunk in _replay_body(bundle, min(deps.replay_delay_s, SWITCH_REPLAY_DELAY_S)):
+                yield chunk
         yield sse("done", "{}")
     finally:
         if getter is not None:
@@ -206,11 +273,8 @@ async def replay_events(deps: WebDeps, preset_id: str, reason: ReplayReason | No
         yield sse("error", PublicError.from_code(code).model_dump_json())
         yield sse("done", "{}")
         return
-    for ev in bundle.event_jsons:
-        if deps.replay_delay_s:
-            await asyncio.sleep(deps.replay_delay_s)
-        yield sse("trace", ev)
-    yield sse("result", bundle.record_json)
+    async for chunk in _replay_body(bundle, deps.replay_delay_s):
+        yield chunk
     yield sse("done", "{}")
 
 
@@ -289,12 +353,13 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
         if not isinstance(data, dict) or set(data) != {"preset_id"} or data["preset_id"] not in PRESET_IDS:
             return deny(400, ErrorCode.INVALID_INPUT)
         preset_id: str = data["preset_id"]
+        t_request = time.monotonic()  # Cloud Run の timeout は受付から数える（外側の期限の計算の起点）
         try:
             adm = await deps.quota.admit(request.headers.get(JUDGE_HEADER))
         except AdmitRejected:
             return deny(429, ErrorCode.QUOTA)
         log_event("web.run_admitted", preset_id=preset_id, live=adm.live, reason=adm.replay_reason)
-        stream = live_events(deps, presets[preset_id], adm) if adm.live else replay_events(deps, preset_id, adm.replay_reason)
+        stream = live_events(deps, presets[preset_id], adm, t_request) if adm.live else replay_events(deps, preset_id, adm.replay_reason)
         return StreamingResponse(
             stream,
             media_type="text/event-stream",

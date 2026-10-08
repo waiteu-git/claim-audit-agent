@@ -205,7 +205,7 @@ async def test_kill_switch_aborts_before_any_network_or_model_call():
 async def test_wall_clock_overrun_aborts_with_wall_clock_and_stops_further_work():
     clock = FakeClock()
 
-    def slow_reader(_req):  # Reader の応答が返った時点で75秒を超えていた
+    def slow_reader(_req):  # Reader の応答が返った時点で壁時計の上限を超えていた
         clock.advance(RUN_CAPS.wall_clock_s + 1)
         return reader_reply(*(raw(LEN_SENTENCE, Kind.REQUIRED, CheckClass.LENGTH_LIMIT),))
 

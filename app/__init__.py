@@ -7,7 +7,7 @@
   errors.py             ErrorCode・AppError・classify()・公開してよいメッセージ
   jsonlog.py            構造化ログ（JSON 1行/イベント）
   textsafe.py           可視テキストの安全判定（U+001E・Cf・制御文字）
-  model/                ModelPort・GeminiPort・ScriptedPort・cassette・retry（Vertex を呼ぶのはここだけ。main.py の S1 を除く）
+  model/                ModelPort・GeminiPort・ScriptedPort・cassette・retry・wallbound（Vertex を呼ぶのはここだけ。main.py の S1 を除く）
   net/                  SafeFetch（外向き HTTP の唯一の出口）: urlcheck・ipcheck・resolver・backend・decode・safefetch・vectors
   ingest/               sanitize（取得物 → SanitizedDoc）・css_hide・inject_scan
   quotes/               DocIndex・QuoteChecker（引用の逐語照合。「検証済み」の印を発行できるのはここだけ）
