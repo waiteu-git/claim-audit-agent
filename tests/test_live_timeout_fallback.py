@@ -209,7 +209,7 @@ def test_the_client_resets_and_explains_when_the_stream_switches_to_the_saved_ru
     js = Path("app/web/static/app.js").read_text(encoding="utf-8")
     block = js.split("function onMode")[1].split("function onError")[0]
     assert "m.switched" in block and "resetResult()" in block  # 途中までの表示を捨てる
-    assert "ライブ実行が時間内に終わらなかったため、保存済みの実行を表示しています。" in js
+    assert "混み合っていて時間内に終わらなかったため、保存済みの結果を表示しています。" in js
 
 
 def test_a_model_call_cut_at_the_wall_clock_ends_as_a_wall_clock_abort_charged_for_that_one_call_only():
