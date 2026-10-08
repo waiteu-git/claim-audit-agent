@@ -743,7 +743,7 @@
     const facts = [];
     facts.push(["実行の種類", rec.mode === "REPLAY" ? "保存済みの実行の再生" : "ライブ実行"]);
     facts.push(["要件", fmt(s.requirements_total) + " 件（必須・禁止 " + fmt(s.obligatory_total) + "）"]);
-    facts.push(["引用の照合", fmt(s.quotes_verbatim) + " / " + fmt(s.quotes_checked) + " 件が一致"]);
+    facts.push(["引用の照合", fmt(s.quotes_verbatim) + " / " + fmt(s.quotes_checked) + " 件が一致" + (rec.mode === "REPLAY" ? "（保存時に検証済み。再生では要項の全文を持たないため、再検証しません）" : "")]);
     facts.push(["確かな要件にしなかったもの", fmt(s.demoted_to_speculative) + " 件（参考へ）"]);
     facts.push(["要項の間の矛盾", fmt(s.contradictions) + " 件"]);
     if (rec.omitted_requirements) facts.push(["省略した要件", fmt(rec.omitted_requirements) + " 件（同梱の記録では件数だけ残しています）"]);
