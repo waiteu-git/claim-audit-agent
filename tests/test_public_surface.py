@@ -4,6 +4,7 @@
 プリセット③で警告帯（注入の件数）が出て、判定が全適合にならない。
 """
 import asyncio
+import json
 import logging
 
 import pytest
@@ -52,7 +53,11 @@ def test_status_lists_the_three_presets_and_the_mode_without_any_url():
     data = r.json()
     assert data["mode"] == "REPLAY"
     assert [p["id"] for p in data["presets"]] == ["lp_self", "sample_defect", "sample_injection"]
-    assert "https://" not in r.text and "example.invalid" not in r.text
+    # URL は links[].href だけ（①の実在ページは Preset の値をそのまま通す）。それ以外の欄には URL を出さない
+    for p in data["presets"]:
+        for ln in p.pop("links"):
+            assert set(ln) == {"role", "label_ja", "href"}
+    assert "https://" not in json.dumps(data) and "example.invalid" not in json.dumps(data)
     assert r.headers["content-security-policy"] == API_CSP
 
 
