@@ -20,7 +20,6 @@
 <main>
   <section class="panel" aria-labelledby="h-presets">
     <h2 id="h-presets">1. 監査する対象を選ぶ</h2>
-    <p class="note">用意した3つの対象から選びます。任意のURLは受け付けません。</p>
     <div id="presets" class="cards" role="radiogroup" aria-labelledby="h-presets"></div>
     <div id="preset-detail" class="preset-detail" hidden>
       <p id="detail-note" class="detail-note" hidden></p>
@@ -48,25 +47,20 @@
       <h3 id="hero-head" class="headline"></h3>
       <p id="hero-sub" class="hero-sub" hidden></p>
       <ul id="summary" class="stats"></ul>
-      <p id="hero-others" class="hero-others" hidden></p>
     </section>
 
     <div id="contradictions" class="contra" hidden></div>
 
-    <section id="planted-band" class="band" aria-labelledby="h-planted" hidden>
-      <h3 id="h-planted">仕込んだ欠陥と、見つけた結果</h3>
-      <ol id="planted-result" class="planted"></ol>
-    </section>
-
     <section id="list-section" class="list" aria-labelledby="h-list" hidden>
-      <div class="listhead">
-        <h3 id="h-list">要件ごとの判定</h3>
-        <div id="filters" class="filters" role="group" aria-label="判定で絞り込む"></div>
-      </div>
+      <h3 id="h-list" class="list-title">要件ごとの判定</h3>
       <p id="list-status" class="sr-only" role="status" aria-live="polite"></p>
       <div id="reqs" class="groups"></div>
-      <p id="omitted" class="omitted" hidden></p>
     </section>
+
+    <details id="planted-band" class="box" hidden>
+      <summary>仕込んだ欠陥と、見つけた結果</summary>
+      <ol id="planted-result" class="planted inner"></ol>
+    </details>
 
     <aside id="source" class="source" aria-labelledby="h-source" hidden>
       <div class="source-head">
@@ -76,22 +70,26 @@
       <dl id="source-body"></dl>
     </aside>
 
-    <section id="trust-band" class="band" aria-labelledby="h-trust" hidden>
-      <h3 id="h-trust">判定の根拠</h3>
-      <p id="trust-who"></p>
-      <p id="trust-quote" class="sub" hidden></p>
-      <details id="trust-example" class="more-box" hidden>
-        <summary>引用を照合した例を見る</summary>
-        <ol id="trust-flow" class="flow"></ol>
-      </details>
-    </section>
+    <details id="trust-band" class="box" hidden>
+      <summary>判定の根拠</summary>
+      <div class="inner">
+        <p id="trust-who"></p>
+        <p id="trust-quote" class="sub" hidden></p>
+        <details id="trust-example" class="more-box" hidden>
+          <summary>引用を照合した例を見る</summary>
+          <ol id="trust-flow" class="flow"></ol>
+        </details>
+      </div>
+    </details>
 
-    <section id="replan-band" class="band" aria-labelledby="h-replan" hidden>
-      <h3 id="h-replan">調べ方を変えた場面</h3>
-      <p class="sub">検査の結果がはっきりしなかったので、次の手を変えた場面です。変えたことは、コードが検査の結果の並びから記録しました。</p>
-      <ol id="replan-steps" class="steps"></ol>
-      <p id="replan-end" class="sub" hidden></p>
-    </section>
+    <details id="replan-band" class="box" hidden>
+      <summary>調べ方を変えた場面</summary>
+      <div class="inner">
+        <p class="sub">検査の結果がはっきりしなかったので、次の手を変えた場面です。変えたことは、コードが検査の結果の並びから記録しました。</p>
+        <ol id="replan-steps" class="steps"></ol>
+        <p id="replan-end" class="sub" hidden></p>
+      </div>
+    </details>
 
     <details id="run-box" class="box">
       <summary>実行の詳細</summary>

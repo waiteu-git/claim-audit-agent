@@ -265,8 +265,31 @@ def test_the_unverifiable_rows_are_split_by_reason_code_into_self_check_and_not_
 def test_a_run_that_switched_from_live_to_the_saved_run_resets_the_screen_and_says_why():
     block = JS.split("function onMode")[1].split("function onError")[0]
     assert "m.switched" in block and "resetResult()" in block
-    assert "ライブ実行が時間内に終わらなかったため、保存済みの実行を表示しています。" in JS
+    assert "混み合っていて時間内に終わらなかったため、保存済みの結果を表示しています。" in JS  # 本人が承認した文面（統合ハブ案B）
     assert ".run-mode.switched" in CSS  # 目立たせる（通常の状態の行と同じ見た目にしない）
+
+
+def test_the_result_shows_few_things_at_once_groups_are_closed_except_the_things_to_fix():
+    """本人の指摘「認知負荷が高め」: 最初に開くのは「直す点」だけ。ご自身で確認・通過・確認不能・参考は件数だけ見せて畳む。
+    カードは札と1行の見出しだけで、根拠の一文・確かめた結果は開いた時だけ。絞り込みの操作・「ほかに」の行・補足の重複は無い。"""
+    assert "open: { fail: true }" in JS  # 最初に開く組は「直す点」だけ
+    block = JS.split("function renderList")[1].split("function verdictNode")[0]
+    assert 'el("details", { cls: "group c-" + tone' in block and "g.open = !!v.open[tone]" in block
+    assert 'if (tone !== "fail") body.appendChild(el("p", { cls: "group-sub"' in block  # 「直す点」の組には補足の文を付けない（説明は1画面に1つ）
+    row = JS.split("function rowNode")[1].split("function factsNode")[0]
+    assert 'el("details", { cls: "rc" }' in row and 'cls: "rhead"' in row  # カードは開閉。札と1行の見出し
+    assert "p.quote" not in row.split('cls: "rhead"')[1].split("const body")[0]  # 見出しの行に、引用の長文を置かない
+    for gone in ("renderFilters", "FILTERS", "COMPACT_LIMIT", "hero-others", "showmore"):
+        assert gone not in JS and gone not in HTML, gone
+    assert 'id="filters"' not in HTML
+    assert 'id="trust-band"' in HTML and re.search(r'<details id="trust-band"[^>]*\bhidden\b', HTML)  # 根拠・調べ方・仕込み・詳細は畳んだ開閉の部品
+
+
+def test_the_headline_numbers_open_their_group_and_the_names_follow_the_ruling():
+    block = JS.split("function renderHero")[1].split("function renderWarning")[0]
+    assert 'openGroup(tone, true)' in block and '"ご自身で確認"' in block and '"通過"' in block
+    assert "ほかに" not in JS  # 補足の行は置かない（件数は組の見出しに出る）
+    assert "受け付けず" in JS  # 「棄却」でなく「受け付けず」
 
 
 def test_a_saved_run_does_not_draw_the_time_gauge_because_its_cap_may_differ_from_todays():

@@ -21,7 +21,7 @@
     STORE_UNAVAILABLE: "枠の記録に接続できません",
     NOT_LIVE_PRESET: "このプリセットは保存済みの実行だけです",
   };
-  const SWITCHED_TEXT = "ライブ実行が時間内に終わらなかったため、保存済みの実行を表示しています。";
+  const SWITCHED_TEXT = "混み合っていて時間内に終わらなかったため、保存済みの結果を表示しています。";
   const VERDICT = {
     "適合": ["v-pass", "✓"],
     "推定適合": ["v-presumed", "△"],
@@ -41,8 +41,6 @@
     pass: ["適合", "実際に確かめて、条件を満たしていました"],
     ref: ["参考", "確かな要件としては扱いません"],
   };
-  const FILTERS = [["all", "すべて"], ["fail", "直す点"], ["human", "ご自身で確認"], ["tool", "確認不能"], ["pass", "適合"], ["ref", "参考"]];
-  const COMPACT_LIMIT = 5; // ご自身で確認・確認不能・参考は、最初に5件だけ出して残りは「ほか N 件を表示」で開く
   const REASON_JA = {
     NO_EVIDENCE: "判断できる根拠が見つかりません",
     BUDGET: "実行の上限に達したため検査していません",
@@ -269,9 +267,9 @@
 
   function resetResult() {
     $("result").hidden = false;
-    for (const id of ["summary", "contradictions", "trace", "budget", "source-body", "filters", "reqs", "facts", "trust-flow", "replan-steps"]) clear($(id));
+    for (const id of ["summary", "contradictions", "trace", "budget", "source-body", "reqs", "facts", "trust-flow", "replan-steps"]) clear($(id));
     $("list-status").textContent = "";
-    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "hero-others", "list-section", "omitted", "planted-band", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
+    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "list-section", "planted-band", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
     clear($("planted-result"));
     $("run-mode").textContent = "";
     $("run-mode").className = "run-mode";
@@ -381,7 +379,7 @@
     const s = rec.summary || {};
     const rows = rowsOf(rec);
     const events = Array.isArray(rec.events) && rec.events.length ? rec.events : state.events;
-    state.view = { rec, rows, filter: "all", more: {} };
+    state.view = { rec, rows, open: { fail: true } }; // 最初に開いておくのは「直す点」だけ
 
     renderHero(rec, rows);
     renderWarning(s);
@@ -392,16 +390,10 @@
     }
     renderContradictions(rec);
     renderPlanted(rec, rows);
-    renderFilters();
     renderList();
     $("list-section").hidden = false;
     $("run-box").open = false; // 結果が出たら、実行の記録は畳む（判定を先に見せる）
     $("trace-box").open = false;
-    const omitted = rec.omitted_requirements || 0;
-    if (omitted) {
-      $("omitted").textContent = "ほか " + fmt(omitted) + " 件の要件は、この記録では件数だけ残しています。";
-      $("omitted").hidden = false;
-    }
     renderTrust(rec, events);
     renderReplanBand(rec, events);
     renderFacts(rec, events);
@@ -418,37 +410,32 @@
     if (rec.status === "ABORTED") {
       head.textContent = "実行を中止したため、判定は出していません。";
       sub.hidden = true;
-      $("hero-others").hidden = true;
       hero.hidden = false;
       return;
     }
     const fail = countOf(rows, "fail");
     const human = countOf(rows, "human");
-    const pass = countOf(rows, "pass");
-    const pres = countOf(rows, "presumed");
-    const tool = countOf(rows, "tool");
-    const ref = countOf(rows, "ref");
+    const pass = countOf(rows, "pass") + countOf(rows, "presumed");
     if (fail > 0) {
       head.textContent = "直す点が " + fmt(fail) + " 件あります。";
-      sub.textContent = "提出前に直してください。直す点には、要項から引いた根拠の一文と、実際に確かめた結果をつけています。";
+      sub.textContent = "提出前に直してください。";
     } else {
       head.textContent = "直す点は見つかりませんでした。";
-      sub.textContent = human > 0 ? "ご自身で確認する項目が " + fmt(human) + " 件あります。公開URLからは確かめられない条件です。" : "";
+      sub.textContent = human > 0 ? "ご自身で確認する項目が " + fmt(human) + " 件あります。" : "";
     }
     sub.hidden = !sub.textContent;
-    for (const [cls, n, label] of [["s-fail", fail, "直す点"], ["s-human", human, "ご自身で確認"], ["s-pass", pass, "適合"]]) {
-      stats.appendChild(el("li", { cls: "stat " + cls + (n === 0 ? " zero" : "") }, [
-        el("span", { cls: "num", text: fmt(n) }),
-        el("span", { cls: "lbl", text: label }),
-      ]));
+    for (const [cls, n, label, tone] of [["s-fail", fail, "直す点", "fail"], ["s-human", human, "ご自身で確認", "human"], ["s-pass", pass, "通過", "pass"]]) {
+      const inner = [el("span", { cls: "num", text: fmt(n) }), el("span", { cls: "lbl", text: label })];
+      const li = el("li", { cls: "stat " + cls + (n === 0 ? " zero" : "") });
+      if (n > 0) {
+        const b = el("button", { cls: "stat-btn", attrs: { type: "button", title: label + "の一覧を開く" } }, inner);
+        b.addEventListener("click", () => openGroup(tone, true));
+        li.appendChild(b);
+      } else {
+        for (const c of inner) li.appendChild(c);
+      }
+      stats.appendChild(li);
     }
-    const others = [];
-    if (pres) others.push("推定適合 " + fmt(pres) + " 件");
-    if (tool) others.push("確認不能 " + fmt(tool) + " 件");
-    if (ref) others.push("参考 " + fmt(ref) + " 件");
-    const o = $("hero-others");
-    o.textContent = others.length ? "ほかに、" + others.join("・") + "。" : "";
-    o.hidden = !others.length;
     hero.hidden = false;
   }
 
@@ -511,106 +498,89 @@
     $("planted-band").hidden = false;
   }
 
-  // 一覧の中の1件へ移る（絞り込み・省略で隠れていたら、開いてから）
+  // 一覧の中の1件へ移る（その組と、その1件を開いてから）
   function showCard(reqId) {
-    let li = document.getElementById("r-" + reqId);
-    if (!li && state.view) {
-      state.view.filter = "all";
-      state.view.more = { human: true, tool: true, ref: true };
-      renderFilters();
-      renderList();
-      li = document.getElementById("r-" + reqId);
-    }
+    const v = state.view;
+    if (!v) return;
+    const row = v.rows.find((x) => x.r.req_id === reqId);
+    if (!row) return;
+    openGroup(row.tone, false);
+    const li = document.getElementById("r-" + reqId);
     if (!li) return;
+    li.querySelector("details").open = true;
     for (const x of document.querySelectorAll(".rcard.hit")) x.classList.remove("hit");
     li.classList.add("hit");
     li.scrollIntoView({ block: "center" });
   }
 
-  // ---- 絞り込みと一覧 ----
-  function renderFilters() {
-    const v = state.view;
-    const box = $("filters");
-    clear(box);
-    const cnt = {
-      all: v.rows.length, fail: countOf(v.rows, "fail"), human: countOf(v.rows, "human"), tool: countOf(v.rows, "tool"),
-      pass: countOf(v.rows, "pass") + countOf(v.rows, "presumed"), ref: countOf(v.rows, "ref"),
-    };
-    for (const [key, label] of FILTERS) {
-      if (key !== "all" && !cnt[key]) continue;
-      const b = el("button", { cls: "filter", attrs: { type: "button", "aria-pressed": String(v.filter === key), "data-filter": key } }, [
-        document.createTextNode(label),
-        el("span", { cls: "fc", text: fmt(cnt[key]) }),
-      ]);
-      b.addEventListener("click", () => {
-        v.filter = key;
-        renderFilters();
-        renderList();
-        $("list-status").textContent = label + " " + fmt(cnt[key]) + " 件を表示しています。";
-      });
-      box.appendChild(b);
-    }
+  // 組を開く（数を押した時は、その組の頭まで移る）
+  function openGroup(tone, scroll) {
+    const g = document.getElementById("grp-" + tone);
+    if (!g) return;
+    g.open = true;
+    if (state.view) state.view.open[tone] = true;
+    if (scroll) g.scrollIntoView({ block: "start" });
   }
 
+  // ---- 一覧（組ごとに畳む。最初に開くのは「直す点」だけ。カードは札と1行の見出しだけで、押すと詳細）----
   function renderList() {
     const v = state.view;
     const box = $("reqs");
     clear(box);
-    const tones = v.filter === "all" ? TONE_ORDER : v.filter === "pass" ? ["presumed", "pass"] : [v.filter];
-    for (const tone of tones) {
+    for (const tone of TONE_ORDER) {
       const rows = v.rows.filter((x) => x.tone === tone);
       if (!rows.length) continue;
-      const compact = tone === "human" || tone === "tool" || tone === "ref";
-      const limit = v.filter === "all" && compact && !v.more[tone] ? COMPACT_LIMIT : rows.length;
-      const shared = tone === "human" || tone === "tool" ? sharedReason(rows) : ""; // 同じ理由文が並ぶ組は、見出しに1回だけ出して、各カードでは繰り返さない
-      const head = el("h4", { cls: "grouphead", attrs: { id: "g-" + tone } }, [
+      const g = el("details", { cls: "group c-" + tone, attrs: { id: "grp-" + tone } });
+      g.open = !!v.open[tone];
+      g.addEventListener("toggle", () => { v.open[tone] = g.open; });
+      g.appendChild(el("summary", { cls: "grouphead" }, [
         el("span", { cls: "gcount", text: fmt(rows.length) }),
-        document.createTextNode(GROUP[tone][0]),
-        el("span", { cls: "sub", text: shared || GROUP[tone][1] }),
-      ]);
+        el("span", { cls: "gtitle", text: GROUP[tone][0] }),
+      ]));
+      const body = el("div", { cls: "groupbody" });
+      if (tone !== "fail") body.appendChild(el("p", { cls: "group-sub", text: GROUP[tone][1] }));
       if (tone === "human") {
         const copy = el("button", { cls: "btn", text: "チェックリストをコピー", attrs: { type: "button" } });
         copy.addEventListener("click", () => copyChecklist(rows, copy));
-        head.appendChild(el("span", { cls: "push" }, [copy]));
+        body.appendChild(el("p", { cls: "group-actions" }, [copy]));
       }
       const ol = el("ol", { cls: "rlist" });
-      for (const x of rows.slice(0, limit)) ol.appendChild(rowNode(x, compact, shared));
-      const section = el("section", { cls: "group c-" + tone, attrs: { "aria-labelledby": "g-" + tone } }, [head, ol]);
-      if (rows.length > limit) {
-        const more = el("button", { cls: "btn showmore", text: "ほか " + fmt(rows.length - limit) + " 件を表示", attrs: { type: "button" } });
-        more.addEventListener("click", () => { v.more[tone] = true; renderList(); $("list-status").textContent = GROUP[tone][0] + " をすべて表示しました。"; });
-        section.appendChild(more);
-      }
-      box.appendChild(section);
+      for (const x of rows) ol.appendChild(rowNode(x));
+      body.appendChild(ol);
+      g.appendChild(body);
+      box.appendChild(g);
     }
-  }
-
-  // 組の中で3件以上に共通する理由文（無ければ空）
-  function sharedReason(rows) {
-    const n = {};
-    for (const x of rows) if (x.reason) n[x.reason] = (n[x.reason] || 0) + 1;
-    let best = "";
-    for (const k of Object.keys(n)) if (n[k] >= 3 && (!best || n[k] > n[best])) best = k;
-    return best;
   }
 
   function verdictNode(v) {
     return el("span", { cls: "verdict " + v.cls }, [el("span", { text: v.mark, attrs: { "aria-hidden": "true" } }), document.createTextNode(v.label)]);
   }
 
-  function rowNode(x, compact, shared) {
+  function firstSentence(t) {
+    const i = String(t || "").indexOf("。");
+    return i >= 0 ? t.slice(0, i + 1) : String(t || "");
+  }
+
+  // カードの見出し（1行）。確かめた結果のある判定は、その結果の一文。確かめていない行は、要項の一文を短く
+  function headingOf(x) {
     const r = x.r;
-    const left = el("div", { cls: "rcard-left" }, [
+    if (["fail", "presumed", "pass"].indexOf(x.tone) >= 0 && x.reason) return firstSentence(x.reason);
+    if (r.span) return clip(r.span.original_span, 44);
+    return clip("（要項に引用できない推測）" + (r.gist || ""), 44);
+  }
+
+  function rowNode(x) {
+    const r = x.r;
+    const head = headingOf(x);
+    const summary = el("summary", { cls: "rhead" }, [
       verdictNode({ cls: x.badge[0], mark: x.badge[1], label: x.name }),
+      el("span", { cls: "rtitle", text: head }),
       el("span", { cls: "rid", text: r.req_id }),
     ]);
-    const main = el("div", { cls: "rcard-main" });
-    main.appendChild(el("p", { cls: "quote" + (r.span ? "" : " quote-none"), text: r.span ? "「" + clip(r.span.original_span, 80) + "」" : "（要項に引用できない推測）" + (r.gist ? " " + r.gist : "") }));
-    if (x.reason && x.reason !== shared) {
-      if (x.tone === "ref") main.appendChild(el("details", { cls: "more" }, [el("summary", { text: "参考にとどめた理由" }), el("p", { cls: "reason", text: x.reason })])); // 参考は長い理由を畳む
-      else main.appendChild(el("p", { cls: "reason", text: x.reason }));
-    }
-    const evidence = x.v && x.name !== "参考" && !compact ? x.v.evidence || [] : [];
+    const body = el("div", { cls: "rbody" });
+    body.appendChild(el("p", { cls: "quote" + (r.span ? "" : " quote-none"), text: r.span ? "「" + clip(r.span.original_span, 80) + "」" : "（要項に引用できない推測）" + (r.gist ? " " + r.gist : "") }));
+    if (x.reason && x.reason !== head) body.appendChild(el("p", { cls: "reason", text: x.reason }));
+    const evidence = x.v && x.name !== "参考" ? x.v.evidence || [] : [];
     if (evidence.length) {
       const chips = el("div", { cls: "evidence" });
       for (const e of evidence) {
@@ -618,15 +588,16 @@
         b.addEventListener("click", () => jumpTo(e.event_seq));
         chips.appendChild(b);
       }
-      main.appendChild(chips);
+      body.appendChild(chips);
     }
-    if (!compact) main.appendChild(moreNode(x));
-    return el("li", { cls: "rcard c-" + x.tone + (compact ? " compact" : ""), attrs: { id: "r-" + r.req_id } }, [left, main]);
+    body.appendChild(factsNode(x));
+    return el("li", { cls: "rcard c-" + x.tone, attrs: { id: "r-" + r.req_id } }, [el("details", { cls: "rc" }, [summary, body])]);
   }
 
-  function moreNode(x) {
+  // 種別・出典・注意（開いたカードの中の、小さな表）
+  function factsNode(x) {
     const r = x.r;
-    const dl = el("dl");
+    const dl = el("dl", { cls: "mini" });
     dl.appendChild(el("dt", { text: "種別" }));
     dl.appendChild(el("dd", { text: (KIND_JA[r.kind] || r.kind) + (r.declared_kind && r.declared_kind !== r.kind ? "（AIの申告: " + r.declared_kind + "）" : "") }));
     if (r.span) {
@@ -640,7 +611,7 @@
       dl.appendChild(el("dt", { text: "注意" }));
       dl.appendChild(el("dd", { text: notes.join("・") }));
     }
-    return el("details", { cls: "more" }, [el("summary", { text: "くわしく" }), dl]);
+    return dl;
   }
 
   function copyChecklist(rows, btn) {
@@ -775,6 +746,7 @@
     facts.push(["引用の照合", fmt(s.quotes_verbatim) + " / " + fmt(s.quotes_checked) + " 件が一致"]);
     facts.push(["確かな要件にしなかったもの", fmt(s.demoted_to_speculative) + " 件（参考へ）"]);
     facts.push(["要項の間の矛盾", fmt(s.contradictions) + " 件"]);
+    if (rec.omitted_requirements) facts.push(["省略した要件", fmt(rec.omitted_requirements) + " 件（同梱の記録では件数だけ残しています）"]);
     facts.push(["実行の制限による拒否", fmt(s.denied) + " 件"]);
     const list = (Array.isArray(events) ? events : []).filter((e) => e && typeof e === "object");
     const isCheck = (e) => e.type === "tool_result" && (e.name === "run_check" || e.name === "http_probe");
