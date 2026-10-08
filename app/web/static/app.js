@@ -298,7 +298,7 @@
       const why = REPLAY_REASON[m.reason];
       note.textContent = m.available === false
         ? "停止中です" + (why ? "（" + why + "）" : "") + "。保存済みの実行もありません。"
-        : "保存済みの実行を再生しています" + (why ? "（" + why + "）" : "") + "。";
+        : "保存済みの実行を表示しています" + (why ? "（" + why + "）" : "") + "。";
     }
   }
 
@@ -376,6 +376,7 @@
 
   function renderResult(rec) {
     state.live = rec.mode !== "REPLAY";
+    if (state.live) $("run-mode").textContent = "ライブ実行の結果です。"; // 「実行中です」のまま残さない（切り替えた時は、その文面のまま）
     const s = rec.summary || {};
     const rows = rowsOf(rec);
     const events = Array.isArray(rec.events) && rec.events.length ? rec.events : state.events;

@@ -307,3 +307,10 @@ def test_the_replan_and_who_bands_use_only_text_nodes_and_the_replay_has_no_hidd
     for pid in ("sample_defect", "sample_injection"):
         text = (REPLAY / f"{pid}.json").read_text(encoding="utf-8")
         assert not re.search(r"[​-‏‪-‮⁠-⁤﻿]", text), pid
+
+
+def test_the_live_progress_line_is_replaced_when_the_result_arrives():
+    """本番の実行で見つかった表示の残り: 結果が出た後も「ライブ実行中です」のままだった。"""
+    block = JS.split("function renderResult")[1].split("function renderHero")[0]
+    assert 'state.live) $("run-mode").textContent = "ライブ実行の結果です。"' in block
+    assert "保存済みの実行を再生しています" not in JS  # 終わった後に「再生しています」と言わない
