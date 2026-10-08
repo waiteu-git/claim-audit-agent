@@ -4,11 +4,13 @@
 プリセット③で警告帯（注入の件数）が出て、判定が全適合にならない。
 """
 import asyncio
+import json
 import logging
 
 import pytest
 
 from app.agent.planner import InspectMode
+from app.checks.leak_scan import scan_text
 from app.config import PRESETS, QUOTA_POLICY, Settings
 from app.errors import AppError, ErrorCode
 from app.quota import Admission, InMemoryState, Pool, code_digest
@@ -26,6 +28,19 @@ from tests.web_support import (
 )
 
 FAILS = "不適合"
+
+
+def _strings(o):  # noqa: ANN001, ANN202
+    """JSON の値（と、辞書のキー）の文字列を全部たどる。"""
+    if isinstance(o, str):
+        yield o
+    elif isinstance(o, dict):
+        for k, v in o.items():
+            yield k
+            yield from _strings(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from _strings(v)
 
 
 def labels(result: dict) -> dict[str, str]:
@@ -52,7 +67,13 @@ def test_status_lists_the_three_presets_and_the_mode_without_any_url():
     data = r.json()
     assert data["mode"] == "REPLAY"
     assert [p["id"] for p in data["presets"]] == ["lp_self", "sample_defect", "sample_injection"]
-    assert "https://" not in r.text and "example.invalid" not in r.text
+    # URL は links[].href だけ（①の実在ページは Preset の値をそのまま通す）。それ以外の欄には URL を出さない。links は走査から外さない
+    hrefs = {ln["href"] for p in data["presets"] for ln in p["links"]}
+    by_id = {p["id"]: p for p in data["presets"]}
+    assert by_id["lp_self"]["links"][-1]["href"] == f"{SELF}/"
+    assert all(ln["href"].startswith("/fx/") for pid in ("sample_defect", "sample_injection") for ln in by_id[pid]["links"])
+    assert all("https://" not in s and "example.invalid" not in s for s in _strings(data) if s not in hrefs)
+    assert scan_text(r.text) == {}  # links を含む応答全体で、鍵・メール・内部URLの形が無い
     assert r.headers["content-security-policy"] == API_CSP
 
 

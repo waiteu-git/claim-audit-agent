@@ -9,6 +9,10 @@
   python -m app.web.replay --write            # ②③の記録を作り直す（決定論: run_id・時刻・時計を固定）
   python -m app.web.replay --check            # 同梱の記録が生成物と一致するか（tests も確かめる）
   python -m app.web.replay --import rec.json --preset lp_self   # 実行記録を REPLAY として取り込む
+
+②③の記録は、公開面が /api/status に載せる「仕込んだ場所 → 見つけた結果」の対応表（app/web/examples.py）の元になる。--write・--check・--import は
+この対応表を組み立てられること（正解表 expected.json と記録が合うこと）も確かめ、合わない記録は書かない・差分として出す
+（起動で初めて落ちる、にしない）。メッセージは固定の識別子だけ（理由コード・プリセットID・項目ID）。
 """
 import argparse
 import asyncio
@@ -26,6 +30,7 @@ from app.contracts import RunMode, RunRecord, serialize_report
 from app.fixtures.eval import OracleReader, RulePlanner
 from app.fixtures.site import FixtureFetch, FixtureSite
 from app.quotes.replay import restore_saved_record
+from app.web.examples import ExamplesCode, ExamplesError, build_examples
 
 REPLAY_QUOTE_MAX_CHARS = 80  # 同梱する第三者の原文の断片は1件80字まで
 REPLAY_REQUIREMENTS_MAX = 40  # 同梱する要件は40件まで（超過分は RunRecord.omitted_requirements に件数だけ残す）
@@ -165,13 +170,42 @@ def load_replays(root: Path = REPLAY_DIR) -> dict[str, ReplayBundle]:
     return out
 
 
+def load_fixture_records(root: Path = REPLAY_DIR) -> dict[str, RunRecord]:
+    """②③の同梱の記録を厳密に読む。load_replays と違い、無い・契約として読めないなら ExamplesError（黙って外さない）。
+    公開面の対応表（examples.build_examples）の元にするので、起動時にここで止める。例外の文言に記録の中身は出さない。"""
+    out: dict[str, RunRecord] = {}
+    for pid in FIXTURE_REPLAYS:
+        p = root / f"{pid}.json"
+        if not p.is_file():
+            raise ExamplesError(ExamplesCode.RECORD_MISSING, pid)
+        try:
+            out[pid] = load_bundle(p).record
+        except Exception:  # noqa: BLE001  原因（検証エラーなど）は記録の中身を含みうるので、連鎖させず固定の識別子だけにする
+            raise ExamplesError(ExamplesCode.RECORD_UNREADABLE, pid) from None
+    return out
+
+
+def cross_check(records: dict[str, RunRecord]) -> None:
+    """記録が正解表と合うか（公開面の対応表を組み立てられるか）。合わなければ ExamplesError。"""
+    build_examples({pid: PRESETS[pid] for pid in records}, records)
+
+
+def _examples_problem(pid: str, record: RunRecord) -> str | None:
+    try:
+        cross_check({pid: record})
+    except ExamplesError as e:
+        return str(e)
+    return None
+
+
 ORACLE_READER = "oracle-reader"  # --write が作る台本の記録の reader_model（実モデルの記録と区別する印）
 
 
 def check(root: Path = REPLAY_DIR) -> list[str]:
     """同梱の②③の記録を確かめる。台本から作った記録（reader_model=oracle-reader）は、再生成と一致するか。
     実モデルの実行記録を --import で取り込んだもの（reader_model が別）は再生成できないので、一致ではなく、
-    契約の読み込みと漏洩の走査を通ることを確かめる（取り込み時にも通した検査を、同梱後の改変に対して繰り返す）。"""
+    契約の読み込みと漏洩の走査を通ることを確かめる（取り込み時にも通した検査を、同梱後の改変に対して繰り返す）。
+    どちらも最後に、正解表との照合（公開面の対応表を組み立てられるか）を通す。合わない時の差分は `ファイル名: 理由コード preset=… item=…`。"""
     diff = []
     for pid in FIXTURE_REPLAYS:
         p = root / f"{pid}.json"
@@ -186,15 +220,22 @@ def check(root: Path = REPLAY_DIR) -> list[str]:
             continue
         if imported:
             try:
-                load_bundle(p)
+                bundle = load_bundle(p)
             except Exception:  # noqa: BLE001  壊れた同梱物は差分として出す
                 diff.append(p.name)
                 continue
             if leak_findings(have):
                 diff.append(p.name)
-            continue
-        if have != bundle_text(asyncio.run(build_fixture_record(pid))):
-            diff.append(p.name)
+                continue
+            record = bundle.record
+        else:
+            record = asyncio.run(build_fixture_record(pid))
+            if have != bundle_text(record):
+                diff.append(p.name)
+                continue
+        problem = _examples_problem(pid, record)  # 公開面の対応表（正解表との照合）を組み立てられるか
+        if problem:
+            diff.append(f"{p.name}: {problem}")
     return diff
 
 
@@ -212,12 +253,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"差分: {d}")
         return 1 if diff else 0
     if a.write:
-        REPLAY_DIR.mkdir(parents=True, exist_ok=True)
-        for pid in FIXTURE_REPLAYS:
-            text = bundle_text(asyncio.run(build_fixture_record(pid)))
+        records = {pid: asyncio.run(build_fixture_record(pid)) for pid in FIXTURE_REPLAYS}
+        texts = {pid: bundle_text(rec) for pid, rec in records.items()}
+        for pid, text in texts.items():
             if leak_findings(text):
                 print(f"{pid}: 記録に公開してはいけない文字列があります", file=sys.stderr)
                 return 1
+        try:
+            cross_check(records)  # 書く前に。正解表と合わない記録は同梱しない
+        except ExamplesError as e:
+            print(f"記録が正解表と合いません（{e}）", file=sys.stderr)
+            return 1
+        REPLAY_DIR.mkdir(parents=True, exist_ok=True)
+        for pid, text in texts.items():
             (REPLAY_DIR / f"{pid}.json").write_text(text, encoding="utf-8")
         return 0
     if not a.preset:
@@ -235,6 +283,12 @@ def main(argv: list[str] | None = None) -> int:
     if found:
         print(f"記録に公開してはいけない文字列があります（種類: {', '.join(sorted(found))}）", file=sys.stderr)
         return 1
+    if a.preset in FIXTURE_REPLAYS:  # ②③は、公開面の対応表の元になる。正解表と合わない記録は取り込まない（起動で初めて落ちる、にしない）
+        try:
+            cross_check({a.preset: record})
+        except ExamplesError as e:
+            print(f"記録が正解表と合いません（{e}）", file=sys.stderr)
+            return 1
     (REPLAY_DIR / f"{a.preset}.json").write_text(text, encoding="utf-8")
     return 0
 

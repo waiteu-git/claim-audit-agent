@@ -3,7 +3,8 @@
   GET  /health        {"ok": true} だけ（Cloud Run は /healthz を予約しているので使わない）
   GET  /  /app.js  /app.css   静的 UI（フレームワーク・外部 CDN・インラインの script/style 無し。CSP で self だけ）
   GET  /fx/{path}     架空フィクスチャの配信（app/fixtures/site.py の FixtureSite。sandbox の CSP）
-  GET  /api/status    モード（LIVE／REPLAY／STOPPED）とプリセットの一覧（入力欄は無い。選べるのはプリセットだけ）
+  GET  /api/status    モード（LIVE／REPLAY／STOPPED）とプリセットの一覧（入力欄は無い。選べるのはプリセットだけ）。各プリセットに
+                      fictional・fictional_note・links（読める要項と提出物）・planted（仕込んだ場所 → 見つけた結果。app/web/examples.py）
   POST /api/run       {"preset_id": "..."} だけを受ける（閉世界: 任意の URL は受けない）。応答は text/event-stream
   /probe は持たない（S1 の疎通確認専用。公開面では 404）。
 
@@ -53,7 +54,8 @@ from app.model.port import ModelPort
 from app.model.retry import RetryingPort
 from app.model.wallbound import WallBoundPort
 from app.quota import Admission, AdmitRejected, InMemoryState, QuotaService, ReplayReason, StatePort
-from app.web.replay import ReplayBundle, load_replays
+from app.web.examples import build_examples
+from app.web.replay import ReplayBundle, load_fixture_records, load_replays
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 UI_CSP = (
@@ -283,6 +285,8 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
     settings = settings or get_settings()
     deps = deps or default_deps(settings)
     presets = build_presets(settings)
+    # 正解表と同梱の記録（②③）がずれていれば、ここで起動を止める（load_replays と違い、壊れた記録を黙って外さない。②③の対応表の元になるため）
+    examples = build_examples(presets, load_fixture_records())
     app = FastAPI(title="claim-audit-agent", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.deps = deps
     static = {path: ((STATIC_DIR / name).read_bytes(), ctype) for path, (name, ctype) in STATIC_FILES.items()}
@@ -330,7 +334,7 @@ def create_app(settings: Settings | None = None, deps: WebDeps | None = None) ->
                     "tool_calls": RUN_CAPS.tool_calls, "fetches": RUN_CAPS.fetches_total, "wall_ms": int(RUN_CAPS.wall_clock_s * 1000),
                 },  # fmt: skip
                 "presets": [
-                    {"id": pid, "label": presets[pid].label_ja, "kind": presets[pid].kind.value, "replay": pid in deps.replays}
+                    {"id": pid, "label": presets[pid].label_ja, "kind": presets[pid].kind.value, "replay": pid in deps.replays, **examples[pid]}
                     for pid in PRESET_IDS
                 ],
             },
