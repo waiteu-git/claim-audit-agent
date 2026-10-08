@@ -189,7 +189,8 @@ def test_the_result_has_a_quote_band_and_a_replan_band_that_start_hidden():
 
 def test_the_quote_band_summary_and_examples_follow_the_agreed_wording_and_limits():
     assert "AIの引用は、コードが要項と照合しました。" in JS
-    assert "一度受け付けず、引き直させました" in JS  # 「棄却」でなく「受け付けず」（本人の裁定 S09 B）
+    assert "一度受け付けず、引用し直させました" in JS  # 「棄却」でなく「受け付けず」（本人の裁定 S09 B）。「引き直し」でなく「引用し直し」（10/8 夜）
+    assert "引き直" not in JS and "AIが引いた" not in JS and 'step("AIが引用した文"' in JS
     assert "examples.length < 1" in JS  # 照合の例は1つだけ（成功の流れ。赤い✕の並びにしない）
     assert JS.count("clip(ex.model, 54)") == 1 and JS.count("clip(ex.original, 54)") == 1  # 例の引用は短く切る
     assert "clip(r.span.original_span, 80)" in JS  # 要件の引用は80字まで

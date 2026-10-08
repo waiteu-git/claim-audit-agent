@@ -753,16 +753,16 @@
     $("trust-who").textContent = "判定はすべて、コードが出しました。AIの役目は、要項を読むことと、次に調べる所を選ぶことだけです。";
     const all = s.quotes_verbatim === s.quotes_checked ? fmt(s.quotes_checked) + " 件すべて" : fmt(s.quotes_checked) + " 件のうち " + fmt(s.quotes_verbatim) + " 件";
     const q = $("trust-quote");
-    q.textContent = "AIの引用は、コードが要項と照合しました。" + all + "が要項と一致しました" + (requoted ? "（" + fmt(requoted) + " 件は、一度受け付けず、引き直させました）" : "") + "。";
+    q.textContent = "AIの引用は、コードが要項と照合しました。" + all + "が要項と一致しました" + (requoted ? "（" + fmt(requoted) + " 件は、一度受け付けず、引用し直させました）" : "") + "。";
     q.hidden = false;
     const flow = $("trust-flow");
     clear(flow);
     const ex = examples[0];
     if (ex && ex.result === "requoted" && ex.original) {
       const step = (k, t, cls) => el("li", { cls: cls || "" }, [el("span", { cls: "k", text: k }), el("span", { cls: "t", text: t })]);
-      flow.appendChild(step("AIが引いた文", "「" + clip(ex.model, 54) + "」", "f-ng"));
+      flow.appendChild(step("AIが引用した文", "「" + clip(ex.model, 54) + "」", "f-ng"));
       flow.appendChild(step("コードの照合", "受け付けず（" + ex.reason + "）"));
-      flow.appendChild(step("引き直し", "「" + clip(ex.original, 54) + "」"));
+      flow.appendChild(step("引用し直し", "「" + clip(ex.original, 54) + "」"));
       flow.appendChild(step("結果", "要項と一字一句一致（コードが確認）", "f-ok"));
       $("trust-example").hidden = false;
     }
