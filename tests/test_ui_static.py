@@ -288,7 +288,7 @@ def test_the_result_shows_few_things_at_once_groups_are_closed_except_the_things
 def test_the_headline_numbers_open_their_group_and_the_names_follow_the_ruling():
     block = JS.split("function renderHero")[1].split("function renderWarning")[0]
     assert 'openGroup(tone, true)' in block and '"ご自身で確認"' in block and '"通過"' in block
-    assert "ほかに" not in JS  # 補足の行は置かない（件数は組の見出しに出る）
+    assert "ほかに " not in JS and '"ほかに' not in JS  # 補足の行（「ほかに N 件」）は置かない（件数は組の見出しに出る）。要件一覧の説明文の「判定のほかに、…」は別
     assert "受け付けず" in JS  # 「棄却」でなく「受け付けず」
 
 
@@ -302,6 +302,20 @@ def test_the_zero_fix_headline_does_not_repeat_the_zero_count_and_the_attack_is_
     for name, text in UI_FILES.items():
         assert "偽の命令" not in text, name
     assert "プロンプトインジェクション" in JS and "プロンプトインジェクション" in HTML
+
+
+def test_the_requirement_list_is_a_closed_band_built_from_the_record_and_copying_is_only_for_the_fictional_examples():
+    """本人の裁定（10/8 夜）: 結果に「要件一覧（N件）」の開閉の帯を足す（最初は閉じる・サーバーと Reader は触らない）。
+    保存済みの実行では「最大40件・引用は80字まで」を必ず出す。Markdown の一括コピーは架空の例（②③）だけ（実在の主催者の要項の①には出さない）。"""
+    assert re.search(r'<details id="reqlist-band"[^>]*\bhidden\b', HTML) and 'id="reqlist-summary"' in HTML and 'id="reqlist-copy"' in HTML
+    assert re.search(r'<div id="reqlist-actions"[^>]*\bhidden\b', HTML)  # コピーのボタンの置き場は、既定で隠れている
+    block = JS.split("function renderReqList")[1].split("function mdCell")[0]
+    assert '"要件一覧（" + fmt(rows.length) + "件）"' in block and "要項の要件一覧" not in JS  # 見出しに「要項の」は付けない
+    assert "保存済みの実行のため、最大40件・引用は80字までです。" in block and "!state.live" in block
+    assert "p.fictional === true" in block and "$(\"reqlist-actions\").hidden = !canCopy" in block  # コピーは架空の例だけ
+    assert "band.open = false" in block  # 最初は閉じる
+    assert "navigator.clipboard" in JS and "コピーできませんでした" in JS  # 失敗した時は、できなかったと言う
+    assert '"reqlist-band"' in JS.split("function resetResult")[1].split("function onMode")[0]  # 新しい実行では帯を隠す
 
 
 def test_a_saved_run_does_not_draw_the_time_gauge_because_its_cap_may_differ_from_todays():

@@ -225,6 +225,15 @@ h3 { font-size: 1.05rem; line-height: 1.5; margin: 0; }
 .trace li.deny { color: var(--fail); }
 .trace li.hit { background: var(--warn-bg); }
 
+.reqlist-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 12px 0 0; }
+.reqlist { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.rq { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; background: var(--panel2); }
+.rq-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 0.875rem; color: var(--muted); }
+.rq-id { font-weight: 700; color: var(--text); }
+.rq-kind { border: 1px solid var(--line2); border-radius: 999px; padding: 0 10px; }
+.rq-quote { margin: 6px 0 0; overflow-wrap: anywhere; }
+.rq-src { margin: 4px 0 0; font-size: 0.875rem; color: var(--muted); }
+
 .foot { color: var(--muted); font-size: 0.9rem; padding-bottom: 32px; }
 
 @media (max-width: 799px) {

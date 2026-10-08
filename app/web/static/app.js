@@ -269,8 +269,10 @@
     $("result").hidden = false;
     for (const id of ["summary", "contradictions", "trace", "budget", "source-body", "reqs", "facts", "trust-flow", "replan-steps"]) clear($(id));
     $("list-status").textContent = "";
-    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "list-section", "planted-band", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
+    for (const id of ["warning", "status-note", "contradictions", "source", "hero", "hero-sub", "list-section", "planted-band", "reqlist-band", "trust-band", "trust-quote", "trust-example", "replan-band", "replan-end"]) $(id).hidden = true;
     clear($("planted-result"));
+    clear($("reqlist"));
+    $("reqlist-copy-status").textContent = "";
     $("run-mode").textContent = "";
     $("run-mode").className = "run-mode";
     state.events = [];
@@ -392,6 +394,7 @@
     renderContradictions(rec);
     renderPlanted(rec, rows);
     renderList();
+    renderReqList(rec, rows);
     $("list-section").hidden = false;
     $("run-box").open = false; // 結果が出たら、実行の記録は畳む（判定を先に見せる）
     $("trace-box").open = false;
@@ -483,6 +486,68 @@
       return n >= f.count && f.count > 0 ? { text: "プロンプトインジェクションの疑いとして " + fmt(n) + " 件、見つかりました（AIには伏せて渡し、判定には使っていません）。", go: () => $("warning").scrollIntoView({ block: "center" }), goLabel: "警告を見る" } : null;
     }
     return null;
+  }
+
+  // ---- 要件一覧（要項から取り出した要件を、種別・引用・出典つきで並べる。画面に来た記録だけで組む＝サーバーにも Reader にも手を入れない）----
+  // 一括コピー（Markdown）は、架空の例（②③）だけ。実在の主催者の要項（①）は画面で見せるだけで、コピーのボタンは出さない。
+  function reqItem(x) {
+    const r = x.r;
+    const head = el("div", { cls: "rq-head" }, [
+      el("span", { cls: "rq-id", text: r.req_id }),
+      el("span", { cls: "rq-kind", text: KIND_JA[r.kind] || r.kind }),
+    ]);
+    const quote = el("p", { cls: "rq-quote" + (r.span ? "" : " quote-none"), text: r.span ? "「" + clip(r.span.original_span, 80) + "」" : "（要項に引用できない推測）" + (r.gist ? " " + r.gist : "") });
+    const kids = [head, quote];
+    if (r.span) kids.push(el("p", { cls: "rq-src", text: "出典: " + r.span.doc_id + " " + (x.doc ? x.doc.label : "") }));
+    return el("li", { cls: "rq" }, kids);
+  }
+
+  function renderReqList(rec, rows) {
+    const band = $("reqlist-band");
+    if (!rows.length) { band.hidden = true; return; }
+    const p = state.presets[rec.preset_id] || {};
+    const saved = !state.live;
+    const canCopy = p.fictional === true;
+    $("reqlist-summary").textContent = "要件一覧（" + fmt(rows.length) + "件）";
+    $("reqlist-lead").textContent = "判定のほかに、要項から取り出した要件の一覧も、根拠の一文つきで見られます。" + (canCopy ? "Markdown でコピーできます。" : "");
+    const note = $("reqlist-note");
+    note.textContent = saved ? "保存済みの実行のため、最大40件・引用は80字までです。" : "";
+    note.hidden = !saved;
+    $("reqlist-actions").hidden = !canCopy;
+    $("reqlist-copy-status").textContent = "";
+    const ol = $("reqlist");
+    clear(ol);
+    for (const x of rows) ol.appendChild(reqItem(x));
+    band.open = false; // 最初は閉じる（判定を先に見せる）
+    band.hidden = false;
+  }
+
+  function mdCell(s) { return String(s || "").replace(/\s+/g, " ").replace(/\|/g, "\\|"); }
+
+  function reqMarkdown(rec, rows, saved) {
+    const p = state.presets[rec.preset_id] || {};
+    const lines = ["# 要件一覧（" + rows.length + "件）", ""];
+    if (p.label) lines.push("対象: " + p.label, "");
+    if (saved) lines.push("保存済みの実行のため、最大40件・引用は80字までです。", "");
+    lines.push("| # | 種別 | 要件（要項の引用） | 出典 |", "|---|---|---|---|");
+    for (const x of rows) {
+      const r = x.r;
+      const q = r.span ? "「" + r.span.original_span + "」" : "（要項に引用できない推測）" + (r.gist ? " " + r.gist : "");
+      lines.push("| " + [r.req_id, KIND_JA[r.kind] || r.kind, q, r.span ? r.span.doc_id + " " + (x.doc ? x.doc.label : "") : ""].map(mdCell).join(" | ") + " |");
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  async function copyReqList() {
+    const st = $("reqlist-copy-status");
+    const v = state.view;
+    try {
+      if (!v || !navigator.clipboard) throw new Error("clipboard");
+      await navigator.clipboard.writeText(reqMarkdown(v.rec, v.rows, !state.live));
+      st.textContent = "コピーしました。";
+    } catch (e) {
+      st.textContent = "コピーできませんでした。";
+    }
   }
 
   function renderPlanted(rec, rows) {
@@ -770,6 +835,7 @@
     readJudgeCode();
     $("run").addEventListener("click", run);
     $("source-close").addEventListener("click", () => { $("source").hidden = true; });
+    $("reqlist-copy").addEventListener("click", copyReqList);
     loadStatus();
   });
 })();

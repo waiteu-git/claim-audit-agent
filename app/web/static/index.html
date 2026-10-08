@@ -57,6 +57,19 @@
       <div id="reqs" class="groups"></div>
     </section>
 
+    <details id="reqlist-band" class="box" hidden>
+      <summary id="reqlist-summary">要件一覧</summary>
+      <div class="inner">
+        <p id="reqlist-lead" class="sub"></p>
+        <p id="reqlist-note" class="sub" hidden></p>
+        <div id="reqlist-actions" class="reqlist-actions" hidden>
+          <button id="reqlist-copy" type="button" class="btn">Markdown でコピー</button>
+          <span id="reqlist-copy-status" class="sub" role="status" aria-live="polite"></span>
+        </div>
+        <ol id="reqlist" class="reqlist"></ol>
+      </div>
+    </details>
+
     <details id="planted-band" class="box" hidden>
       <summary>仕込んだ欠陥と、見つけた結果</summary>
       <ol id="planted-result" class="planted inner"></ol>
