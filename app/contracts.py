@@ -683,6 +683,53 @@ class UrlPrefix(_Frozen):
         return path == self.path_prefix or path.startswith(self.path_prefix + "/")
 
 
+# ---------------------------------------------------------------------------
+# GitHub 公開リポジトリの固定ファイル取得（第7弾の土台。入口は app/github_repo.py、S3 の規則は net/safefetch.py）
+# ---------------------------------------------------------------------------
+# owner/repo の形と固定名の「唯一の定義」。入口の検証（github_repo.parse_repo_url）も S3 の許可規則（RepoRawScope.matches）も
+# ここの関数を使う＝同じ事実を2か所で判定しない。
+GITHUB_RAW_HOST = "raw.githubusercontent.com"
+GITHUB_RAW_REF = "HEAD"
+# 取得してよいファイルの名前（完全一致・大文字小文字を区別）。README と LICENSE は、この並びの先に見つかったものを使う。
+REPO_FILE_NAMES: tuple[str, ...] = ("README.md", "README", "LICENSE", "LICENSE.md", "LICENSE.txt", "Dockerfile", "requirements.txt")
+_GITHUB_OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")  # 1〜39字・先頭と末尾はハイフンでない（ASCII だけ）
+_GITHUB_REPO = re.compile(r"[A-Za-z0-9._-]{1,100}")
+
+
+def is_github_owner(value: str) -> bool:
+    return isinstance(value, str) and _GITHUB_OWNER.fullmatch(value) is not None
+
+
+def is_github_repo(value: str) -> bool:
+    """英数と . _ - の1〜100字。"." ".." と ".git" 終わり（大文字小文字を問わない）は不可。"""
+    return (
+        isinstance(value, str)
+        and _GITHUB_REPO.fullmatch(value) is not None
+        and value not in (".", "..")
+        and not value.lower().endswith(".git")
+    )
+
+
+class RepoRawScope(_Frozen):
+    """S3 の取得規則の1つ: 公開リポジトリの固定ファイルだけ（`UrlPrefix` とは別の型。既定は無効で、S3 の設定で明示的に有効にした時だけ働く）。
+
+    URL 接頭辞では「owner/repo は任意・その先は固定名だけ」を表せない（接頭辞は `/owner/repo/HEAD/` までで、任意の owner/repo を
+    許すと配下のどのパスも通る）。そこで形そのものを検査する別の型にし、`UrlPrefix.matches` の定義には手を入れない。
+    host は raw.githubusercontent.com 固定、パスは `/<owner>/<repo>/HEAD/<固定名>` に完全一致、クエリ無し、ポートは URL 検証が 443 だけ。
+    リダイレクトを追わない・本文の上限・バイナリの拒否は SafeFetch がこの規則で通った要求にだけ掛ける。
+    """
+
+    def matches(self, host: str, path: str) -> bool:
+        """正規化済み（net.urlcheck.validate_url の後）の host と path が規則の形に完全一致するか。"""
+        if host != GITHUB_RAW_HOST:
+            return False
+        parts = path.split("/")  # "/o/r/HEAD/README.md" → ["", "o", "r", "HEAD", "README.md"]
+        if len(parts) != 5 or parts[0] != "":
+            return False
+        _, owner, repo, ref, name = parts
+        return is_github_owner(owner) and is_github_repo(repo) and ref == GITHUB_RAW_REF and name in REPO_FILE_NAMES
+
+
 class PresetKind(StrEnum):
     """プリセットの種類（§9 の3本のデモに対応）。"""
 
