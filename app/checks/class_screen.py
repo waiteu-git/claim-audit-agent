@@ -63,9 +63,12 @@ _URL = re.compile(
 # 「項目にご記入ください」など）。公開ページの本文を調べる検査（contains_terms）は、こういう要件には当てられない:
 # 本文に無いのは当然で、「無い」は不適合の証拠にならない（10/8 に自分のサービスを実 LP で自己監査して、動画URLの登録の要件が
 # 「本文に無い」で不適合になった）。当てずに「検査できる範囲の外」（確認不能）にする＝誤った不適合を出さない側に倒す。
+# 「項目」「欄」は、「『動作確認の方法』項目にご記載ください」のように記入先の欄を指す言い方を拾う（同日、Web版の作成が難しい
+# 場合の事情を欄に書く要件が、gemini-3.5-flash の自己監査で「本文に無い」不適合になった）。「次の項目を記載すること」のような
+# 一覧の意味の「項目」も確認不能に倒れるが、誤った不適合を出すよりよい。
 _ELSEWHERE = re.compile(
-    r"登録|記入|入力|フォーム|ダッシュボード|申し込|申込|届け出|申請|"
-    r"\bregist|\bform\b|dashboard|\benter\b|\bfill\b|\bapply\b|\bapplication\b",
+    r"登録|記入|入力|フォーム|ダッシュボード|申し込|申込|届け出|申請|項目|欄|"
+    r"\bregist|\bform\b|dashboard|\benter\b|\bfill\b|\bapply\b|\bapplication\b|\bfield\b",
     _I,
 )
 _PAGE_TEXT_CLASSES = frozenset({CheckClass.GUIDANCE_PRESENT, CheckClass.URL_PRESENT})

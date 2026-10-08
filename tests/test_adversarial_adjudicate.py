@@ -515,6 +515,10 @@ def test_a_quote_free_requirement_set_still_judges_without_error():
         "説明文はダッシュボードから入力してください。URLもあわせてお願いします。",
         "Register the demo video URL in the project form.",
         "Enter the test account in the dashboard.",
+        # 条件つきで、事情を書く先が提出フォームの欄（gemini-3.5-flash の実LP自己監査で、本文に無いことが不適合になった）
+        "ウェブ版を用意できない時は、アプリの種類とその事情を「確認方法」の項目に書いてください。",
+        "テストアカウントの案内は、提出フォームの該当欄に書いてください。",
+        "Describe the situation in the verification field.",
     ],
 )
 def test_requirements_about_a_submission_form_are_not_checked_against_the_page_text(check_class, quote):
