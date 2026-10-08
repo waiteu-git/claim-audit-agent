@@ -255,7 +255,7 @@ async def test_the_router_runs_what_autorun_left_but_does_not_follow_links_so_it
     （案内ページには在る＝誤った absent。Planner が辿れば推定適合になる: tests/test_agent_replan.py）。"""
     res = await go(InspectMode.ROUTER, fetch=guide_fetch(), reader=guide_reader())
     v = verdicts(res)
-    assert v["R3"].label is C.VerdictLabel.FAIL and v["R3"].evidence[0].label == "求められた語が本文に無い"
+    assert v["R3"].label is C.VerdictLabel.FAIL and v["R3"].evidence[0].label == "求められた語が提出物のページに無い"
     plan_ev = next(e for e in res.events if e.type is TraceType.AUTORUN and e.name == "plan")
     assert plan_ev.attrs["deferred"] == 1  # AUTORUN は前提が揃わないので走らせず、router が残りとして走らせた
     assert [o.checker.value for o in res.record.observations if o.req_id == "R3"] == ["contains_terms"]

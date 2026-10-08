@@ -9,6 +9,7 @@
   python -m app.web.replay --write            # ②③の記録を作り直す（決定論: run_id・時刻・時計を固定）
   python -m app.web.replay --check            # 同梱の記録が生成物と一致するか（tests も確かめる）
   python -m app.web.replay --import rec.json --preset lp_self   # 実行記録を REPLAY として取り込む
+  python -m app.web.replay --rejudge          # 同梱の全記録の判定を、記録の要件・観測から今のコードで再判定して書き直す（オフライン。実モデルは呼ばない）
 
 ②③の記録は、公開面が /api/status に載せる「仕込んだ場所 → 見つけた結果」の対応表（app/web/examples.py）の元になる。--write・--check・--import は
 この対応表を組み立てられること（正解表 expected.json と記録が合うこと）も確かめ、合わない記録は書かない・差分として出す
@@ -22,11 +23,23 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.adjudicate import adjudicate
 from app.agent.planner import InspectMode
 from app.agent.run import run_audit
 from app.checks.leak_scan import scan_text
 from app.config import PRESET_IDS, PRESET_SAMPLE_DEFECT, PRESET_SAMPLE_INJECTION, PRESETS, Settings
-from app.contracts import RunMode, RunRecord, serialize_report
+from app.contracts import (
+    CHECK_CLASS_CHECKER,
+    AdjudicationInput,
+    Kind,
+    RunMode,
+    RunRecord,
+    RunStatus,
+    ToolName,
+    TraceType,
+    UnverifiableReason,
+    serialize_report,
+)
 from app.fixtures.eval import OracleReader, RulePlanner
 from app.fixtures.site import FixtureFetch, FixtureSite
 from app.quotes.replay import restore_saved_record
@@ -201,16 +214,37 @@ def _examples_problem(pid: str, record: RunRecord) -> str | None:
 ORACLE_READER = "oracle-reader"  # --write が作る台本の記録の reader_model（実モデルの記録と区別する印）
 
 
+def _imported_record_ok(p: Path, text: str) -> bool:
+    """実モデルの実行記録を取り込んだ記録の検査: 契約の読み込み・漏洩の走査・今のコードの再判定との一致。
+    再判定との一致は、判定表とトレースの verdict イベントが、今の判定表（理由コード・理由文・語）のまま古びていないことを見る。
+    印のある実行の記録（RejudgeUnsupported）は、記録の入力だけでは再判定できないので、この一致は見ない。"""
+    try:
+        record = load_bundle(p).record
+    except Exception:  # noqa: BLE001  壊れた同梱物は差分として出す
+        return False
+    if leak_findings(text):
+        return False
+    try:
+        again = rejudge(record)
+    except RejudgeUnsupported:
+        return True
+    except RejudgeRefused:
+        return False
+    return again.verdicts == record.verdicts and again.events == record.events
+
+
 def check(root: Path = REPLAY_DIR) -> list[str]:
-    """同梱の②③の記録を確かめる。台本から作った記録（reader_model=oracle-reader）は、再生成と一致するか。
-    実モデルの実行記録を --import で取り込んだもの（reader_model が別）は再生成できないので、一致ではなく、
-    契約の読み込みと漏洩の走査を通ることを確かめる（取り込み時にも通した検査を、同梱後の改変に対して繰り返す）。
-    どちらも最後に、正解表との照合（公開面の対応表を組み立てられるか）を通す。合わない時の差分は `ファイル名: 理由コード preset=… item=…`。"""
+    """同梱の記録を確かめる。台本から作った②③の記録（reader_model=oracle-reader）は、再生成と一致するか。
+    実モデルの実行記録を --import で取り込んだもの（reader_model が別。実LP を含む）は再生成できないので、一致ではなく、
+    契約の読み込み・漏洩の走査・今のコードの再判定との一致を確かめる（取り込み時にも通した検査と、判定表が古びていないかを、
+    同梱後の改変やコードの変更に対して繰り返す）。②③の記録が無いのは差分。実LP の記録が無いのは差分にしない。
+    ②③は最後に、正解表との照合（公開面の対応表を組み立てられるか）を通す。合わない時の差分は `ファイル名: 理由コード preset=… item=…`。"""
     diff = []
-    for pid in FIXTURE_REPLAYS:
+    for pid in PRESET_IDS:
         p = root / f"{pid}.json"
         if not p.is_file():
-            diff.append(p.name)
+            if pid in FIXTURE_REPLAYS:
+                diff.append(p.name)
             continue
         have = p.read_text(encoding="utf-8")
         try:
@@ -218,16 +252,13 @@ def check(root: Path = REPLAY_DIR) -> list[str]:
         except ValueError:
             diff.append(p.name)
             continue
-        if imported:
-            try:
-                bundle = load_bundle(p)
-            except Exception:  # noqa: BLE001  壊れた同梱物は差分として出す
+        if imported or pid not in FIXTURE_REPLAYS:
+            if not _imported_record_ok(p, have):
                 diff.append(p.name)
                 continue
-            if leak_findings(have):
-                diff.append(p.name)
+            if pid not in FIXTURE_REPLAYS:
                 continue
-            record = bundle.record
+            record = load_bundle(p).record  # 取り込んだ②③の記録（_imported_record_ok が読めることを確かめ済み）
         else:
             record = asyncio.run(build_fixture_record(pid))
             if have != bundle_text(record):
@@ -239,12 +270,61 @@ def check(root: Path = REPLAY_DIR) -> list[str]:
     return diff
 
 
+class RejudgeRefused(ValueError):
+    """記録の入力（要件・文書・観測）から今のコードで再判定すると、記録を黙って別物に書き換えてしまう。書き換えない。"""
+
+
+class RejudgeUnsupported(RejudgeRefused):
+    """記録に残らない入力（Planner の確認不能の印・部分結果の印）が判定に効いた実行の記録。再判定できない。"""
+
+
+# 関門（checks/unverifiable_reason）が決める確認不能の理由コード。これらの間の変更だけは、関門の改善として許す
+_GATE_CODES = frozenset(
+    {UnverifiableReason.HUMAN_ONLY, UnverifiableReason.FUTURE, UnverifiableReason.NOT_PUBLIC, UnverifiableReason.OUT_OF_SCOPE}
+)
+
+
+def _decided_by_gate(req) -> bool:  # noqa: ANN001
+    return req.span is not None and req.kind is not Kind.SPECULATIVE and CHECK_CLASS_CHECKER[req.check_class] is None
+
+
+def rejudge(record: RunRecord) -> RunRecord:
+    """記録の要件・文書・観測から、判定（理由コード・理由文・根拠チップ）とトレースの verdict イベントを今の判定表で作り直す。
+
+    ラベルは変えない（変わるなら RejudgeRefused）。理由コードが変わってよいのは、関門が決める要件（検査できないクラス）の
+    関門の4コードの間だけ。それ以外の変更（印などの入力が足りない記録）は RejudgeRefused にして、黙って書き換えない。
+    記録は Planner の印を持たないので、印のある実行（mark_unverifiable の呼び出しがある・部分結果）は RejudgeUnsupported。
+    """
+    if record.status is not RunStatus.DONE or any(e.name == ToolName.MARK_UNVERIFIABLE.value for e in record.events):
+        raise RejudgeUnsupported("印のある実行の記録は、記録の入力だけでは再判定できません")
+    new = adjudicate(AdjudicationInput(requirements=record.requirements, docs=record.docs, observations=record.observations))
+    old = {v.req_id: v for v in record.verdicts}
+    reqs = {r.req_id: r for r in record.requirements}
+    if set(old) != {v.req_id for v in new}:
+        raise RejudgeRefused("記録の要件と判定が対応しません")
+    for v in new:
+        was = old[v.req_id]
+        if v.label is not was.label:
+            raise RejudgeRefused(f"再判定でラベルが変わりました（{v.req_id}）。記録の入力が足りない可能性があります")
+        if v.reason_code is not was.reason_code and not (
+            _decided_by_gate(reqs[v.req_id]) and {v.reason_code, was.reason_code} <= _GATE_CODES
+        ):
+            raise RejudgeRefused(f"再判定で、関門の外の理由コードが変わりました（{v.req_id}）。記録の入力が足りない可能性があります")
+    code_of = {v.req_id: (v.reason_code.value if v.reason_code else None) for v in new}
+    events = tuple(
+        e.model_copy(update={"reason_code": code_of[e.req_id]}) if e.type is TraceType.VERDICT and e.req_id in code_of else e
+        for e in record.events
+    )
+    return record.model_copy(update={"verdicts": new, "events": events})
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.web.replay")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--write", action="store_true")
     g.add_argument("--check", action="store_true")
     g.add_argument("--import", dest="import_path", type=Path)
+    g.add_argument("--rejudge", action="store_true")
     ap.add_argument("--preset", choices=PRESET_IDS)
     a = ap.parse_args(argv)
     if a.check:
@@ -252,6 +332,27 @@ def main(argv: list[str] | None = None) -> int:
         for d in diff:
             print(f"差分: {d}")
         return 1 if diff else 0
+    if a.rejudge:
+        outs: dict[Path, str] = {}
+        for pid in PRESET_IDS:  # 全記録を先に作り直し、1つでも再判定できなければ何も書かない
+            p = REPLAY_DIR / f"{pid}.json"
+            if not p.is_file():
+                continue
+            try:
+                text = bundle_text(rejudge(load_bundle(p).record))
+            except RejudgeRefused as e:
+                print(f"{pid}: 再判定できません（{e}）", file=sys.stderr)
+                return 1
+            except Exception as e:  # noqa: BLE001  壊れた記録は、内容を出さずに種類だけ伝えて止める（何も書かない）
+                print(f"{pid}: 記録を読めません（{type(e).__name__}）", file=sys.stderr)
+                return 1
+            if leak_findings(text):
+                print(f"{pid}: 記録に公開してはいけない文字列があります", file=sys.stderr)
+                return 1
+            outs[p] = text
+        for p, text in outs.items():
+            p.write_text(text, encoding="utf-8")
+        return 0
     if a.write:
         records = {pid: asyncio.run(build_fixture_record(pid)) for pid in FIXTURE_REPLAYS}
         texts = {pid: bundle_text(rec) for pid, rec in records.items()}

@@ -1425,7 +1425,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R1",
    "result_digest": null,
    "run_id": "Zx9rp-yJh5Lwrn7kHresKw",
@@ -1518,7 +1518,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R4",
    "result_digest": null,
    "run_id": "Zx9rp-yJh5Lwrn7kHresKw",
@@ -1549,7 +1549,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R5",
    "result_digest": null,
    "run_id": "Zx9rp-yJh5Lwrn7kHresKw",
@@ -1611,7 +1611,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R7",
    "result_digest": null,
    "run_id": "Zx9rp-yJh5Lwrn7kHresKw",
@@ -1642,7 +1642,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R8",
    "result_digest": null,
    "run_id": "Zx9rp-yJh5Lwrn7kHresKw",
@@ -2117,8 +2117,8 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R1"
   },
   {
@@ -2130,7 +2130,7 @@
     }
    ],
    "label": "不適合",
-   "reason": "提出物の本文は1,215字（空白を除くと1,206字）で、要項の上限800字を超えています。",
+   "reason": "提出物のページの文字は1,215字（空白を除くと1,206字）で、要項の上限800字を超えています。",
    "reason_code": null,
    "req_id": "R2"
   },
@@ -2150,15 +2150,15 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R4"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R5"
   },
   {
@@ -2170,28 +2170,28 @@
     }
    ],
    "label": "不適合",
-   "reason": "提出物の本文に、公開してはいけない文字列が含まれています。",
+   "reason": "提出物のページに、公開してはいけない文字列が含まれています。",
    "reason_code": null,
    "req_id": "R6"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R7"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R8"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
+   "reason": "この道具では検査していません。要項を読んで、ご自身で確認してください。",
    "reason_code": "OUT_OF_SCOPE",
    "req_id": "R9"
   }

@@ -2906,7 +2906,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R1",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -2937,7 +2937,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R2",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -2968,7 +2968,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R3",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -2999,7 +2999,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R4",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3061,7 +3061,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R6",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3092,7 +3092,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R7",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3216,7 +3216,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R11",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3247,7 +3247,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R12",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3402,7 +3402,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R17",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3464,7 +3464,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "FUTURE",
    "req_id": "R19",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3495,7 +3495,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "FUTURE",
    "req_id": "R20",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3557,7 +3557,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R22",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3588,7 +3588,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R23",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3681,7 +3681,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R26",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3805,7 +3805,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R30",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -4053,7 +4053,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "FUTURE",
    "req_id": "R38",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -4115,7 +4115,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "FUTURE",
    "req_id": "R40",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -5167,56 +5167,56 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R1"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R2"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R3"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R4"
   },
   {
    "evidence": [],
    "label": "参考",
-   "reason": "引用は原文と一致しますが、義務の語が無いため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
+   "reason": "引用は要項と一致しますが、義務の語が無いため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
    "reason_code": null,
    "req_id": "R5"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R6"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R7"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
+   "reason": "この道具では検査していません。要項を読んで、ご自身で確認してください。",
    "reason_code": "OUT_OF_SCOPE",
    "req_id": "R8"
   },
@@ -5236,22 +5236,22 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
+   "reason": "この道具では検査していません。要項を読んで、ご自身で確認してください。",
    "reason_code": "OUT_OF_SCOPE",
    "req_id": "R10"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R11"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R12"
   },
   {
@@ -5264,7 +5264,7 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
+   "reason": "この道具では検査していません。要項を読んで、ご自身で確認してください。",
    "reason_code": "OUT_OF_SCOPE",
    "req_id": "R14"
   },
@@ -5272,7 +5272,7 @@
    "evidence": [
     {
      "event_seq": 61,
-     "label": "求められた語が本文に無い",
+     "label": "求められた語が提出物のページに無い",
      "obs_id": "O3"
     }
    ],
@@ -5291,8 +5291,8 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R17"
   },
   {
@@ -5305,15 +5305,15 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+   "reason_code": "FUTURE",
    "req_id": "R19"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+   "reason_code": "FUTURE",
    "req_id": "R20"
   },
   {
@@ -5332,36 +5332,36 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R22"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R23"
   },
   {
    "evidence": [],
    "label": "参考",
-   "reason": "引用は原文と一致しますが、義務の語が無いため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
+   "reason": "引用は要項と一致しますが、義務の語が無いため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
    "reason_code": null,
    "req_id": "R24"
   },
   {
    "evidence": [],
    "label": "参考",
-   "reason": "引用は原文と一致しますが、否定・例外を含む文のため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
+   "reason": "引用は要項と一致しますが、否定・例外を含む文のため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
    "reason_code": null,
    "req_id": "R25"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R26"
   },
   {
@@ -5374,22 +5374,22 @@
   {
    "evidence": [],
    "label": "参考",
-   "reason": "引用は原文と一致しますが、否定・例外を含む文のため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
+   "reason": "引用は要項と一致しますが、否定・例外を含む文のため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
    "reason_code": null,
    "req_id": "R28"
   },
   {
    "evidence": [],
    "label": "参考",
-   "reason": "引用は原文と一致しますが、否定・例外を含む文のため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
+   "reason": "引用は要項と一致しますが、否定・例外を含む文のため、確かな要件としては扱わず、参考として表示し、判定の集計に含めません。",
    "reason_code": null,
    "req_id": "R29"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R30"
   },
   {
@@ -5408,7 +5408,7 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
+   "reason": "この道具では検査していません。要項を読んで、ご自身で確認してください。",
    "reason_code": "OUT_OF_SCOPE",
    "req_id": "R32"
   },
@@ -5448,36 +5448,36 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
+   "reason": "この道具では検査していません。要項を読んで、ご自身で確認してください。",
    "reason_code": "OUT_OF_SCOPE",
    "req_id": "R36"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
+   "reason": "この道具では検査していません。要項を読んで、ご自身で確認してください。",
    "reason_code": "OUT_OF_SCOPE",
    "req_id": "R37"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+   "reason_code": "FUTURE",
    "req_id": "R38"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
+   "reason": "この道具では検査していません。要項を読んで、ご自身で確認してください。",
    "reason_code": "OUT_OF_SCOPE",
    "req_id": "R39"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "検査できる範囲の外です。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+   "reason_code": "FUTURE",
    "req_id": "R40"
   }
  ]
