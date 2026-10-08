@@ -4,6 +4,12 @@
 # 既定は DRY_RUN=1（実行する gcloud コマンドを表示するだけ）。実際に出すのは人間が --apply を付けた時だけ。
 # このスクリプトは allUsers を付けない（公開は §8 の段階に沿って人間が別途行う）。秘密・鍵・実プロジェクト ID は書かない。
 #
+# ⚠ 既に動いているサービスの更新（コードだけの再デプロイ）には使わない。下の --set-env-vars は環境変数を【全置換】する。
+#   S2 では LIVE_ENABLED を 0 に戻し、運用で足した STATE_BACKEND・JUDGE_CODE_SHA256・LP_SEED_URLS を消す
+#   （ライブが閉じ、審査員コードが効かなくなり、枠の保存先が変わる）。更新は次の形だけ:
+#     gcloud run deploy <service> --source=. --update-env-vars=PROMPT_VERSION=<sha>
+#   このスクリプトは「最初に出す時」の雛形。
+#
 #   PROJECT_ID=<id> SA_AGENT=<sa-email> ./deploy.sh agent              # S1 claim-audit-agent（staging・IAM認証）
 #   PROJECT_ID=<id> SA_DEMO=<sa-email>  FETCHER_URL=<url> ./deploy.sh demo     # S2 claim-audit-demo（公開用）
 #   PROJECT_ID=<id> SA_FETCHER=<sa-email> ALLOWED_PREFIXES=<...> ./deploy.sh fetcher  # S3 claim-audit-fetcher
