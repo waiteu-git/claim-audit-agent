@@ -253,12 +253,20 @@ def check(root: Path = REPLAY_DIR) -> list[str]:
             diff.append(p.name)
             continue
         if imported or pid not in FIXTURE_REPLAYS:
-            if not _imported_record_ok(p, have):
+            try:
+                record = load_bundle(p).record
+            except Exception:  # noqa: BLE001  壊れた同梱物は差分として出す
                 diff.append(p.name)
                 continue
-            if pid not in FIXTURE_REPLAYS:
-                continue
-            record = load_bundle(p).record  # 取り込んだ②③の記録（_imported_record_ok が読めることを確かめ済み）
+            if pid in FIXTURE_REPLAYS:
+                # 取り込んだ②③の記録は、まず正解表との照合を見る（食い違いは、どの項目かが分かる識別子つきの差分にする）
+                problem = _examples_problem(pid, record)
+                if problem:
+                    diff.append(f"{p.name}: {problem}")
+                    continue
+            if not _imported_record_ok(p, have):  # 契約・漏洩の走査・今の判定表との一致（古びていないか）
+                diff.append(p.name)
+            continue
         else:
             record = asyncio.run(build_fixture_record(pid))
             if have != bundle_text(record):
