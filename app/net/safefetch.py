@@ -61,7 +61,7 @@ from app.net.backend import PinnedBackend, PinViolation, WireBudgetExceeded, Wir
 from app.net.decode import BodyDecoder, DecodeError, UnsupportedEncoding, parse_content_encoding
 from app.net.resolver import GuardedResolver, HostResolver, IpBlocked, ResolveFailed, system_resolver
 from app.net.urlcheck import NormalizedUrl, UrlReject, UrlRejected, in_scope, validate_url
-from app.textsafe import escape_for_display, is_unsafe_char, strip_unsafe
+from app.textsafe import escape_for_display, is_unsafe_char, looks_binary, strip_nul, strip_unsafe
 
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _ACCEPT = "text/html,application/xhtml+xml,text/plain,text/markdown,application/json;q=0.9"
@@ -106,6 +106,9 @@ class _StrictRule:
     kinds: frozenset[ContentKind]  # 受ける Content-Type の種別
     max_bytes: int  # 本文の上限（打切りでなく拒否）
     size_note: str
+    # NUL の扱い。"reject": 1バイトでもあれば拒否（固定ファイル）。"strip": textsafe.looks_binary でバイナリなら拒否、
+    # それ以外の紛れた NUL は取り除いて本文にする（公開ページ。NUL の除去はここ＝S3 の1か所）
+    nul: str = "reject"
 
 
 @dataclass(frozen=True)
@@ -235,7 +238,8 @@ class SafeFetch:
         self._open_page = open_page  # None（既定）なら要項モードの公開ページの規則は働かない
         self._repo_rule = _StrictRule("repo_raw", frozenset({ContentKind.PLAIN}), limits.repo_max_file_bytes, "size.repo_file")
         self._page_rule = _StrictRule(
-            "open_page", frozenset({ContentKind.HTML, ContentKind.PLAIN}), min(limits.spec_max_page_bytes, limits.max_decoded_bytes), "size.spec_page"
+            "open_page", frozenset({ContentKind.HTML, ContentKind.PLAIN}), min(limits.spec_max_page_bytes, limits.max_decoded_bytes), "size.spec_page",
+            nul="strip",
         )
         self._limits = limits
         self._guard = GuardedResolver(resolver or system_resolver, timeout_s=limits.connect_timeout_s)
@@ -530,8 +534,14 @@ class SafeFetch:
                 if decoder.truncated:
                     reply.outcome, reply.limit_hit, reply.note = FetchOutcome.TOO_LARGE, FetchLimit.CONTENT_LENGTH, strict.size_note
                     return reply
-                if b"\x00" in decoder.data:  # バイナリ。中身は返さない
+                binary = looks_binary(decoder.data) if strict.nul == "strip" else b"\x00" in decoder.data
+                if binary:  # バイナリ。中身は返さない
                     reply.outcome, reply.note = FetchOutcome.UNSUPPORTED_TYPE, "type.binary"
+                    return reply
+                if strict.nul == "strip" and b"\x00" in decoder.data:  # ふつうの本文に紛れた NUL は取り除く
+                    reply.body = strip_nul(decoder.data)
+                    reply.content_kind = kind
+                    reply.note = "body.nul_stripped"
                     return reply
             reply.body = decoder.data
             if decoder.truncated:

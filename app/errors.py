@@ -31,6 +31,10 @@ class ErrorCode(StrEnum):
     REPO_UNAVAILABLE = "REPO_UNAVAILABLE"  # 取得が許可されない（S3 の規則が無効など）。いまは使えない
     # 要項モード（第11弾）
     SPEC_UNAVAILABLE = "SPEC_UNAVAILABLE"  # 取得が許可されない（S3 の SPEC_FETCH_ENABLED が無い・規則の外）。いまは使えない
+    # 要項モードで全ページが読めず、理由が1種類にそろった時（混ざる時は FETCH_FAILED）。文言は contracts.SpecSkipReason と同じ趣旨
+    SPEC_UNSUPPORTED = "SPEC_UNSUPPORTED"  # HTML とテキスト以外の形式（PDF・画像など）
+    SPEC_TOO_LARGE = "SPEC_TOO_LARGE"  # 大きすぎる
+    SPEC_EMPTY = "SPEC_EMPTY"  # 読める本文が無い
 
 
 # 公開してよい固定文。値（URL・ID・数値）を埋め込まない＝漏洩の経路を作らない。
@@ -51,6 +55,9 @@ PUBLIC_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.REPO_RATE_LIMITED: "GitHub の回数制限で、いまは確かめられません。",
     ErrorCode.REPO_UNAVAILABLE: "GitHubリポジトリの点検は、いま使えません。",
     ErrorCode.SPEC_UNAVAILABLE: "要項のURLからの読み取りは、いま使えません。",
+    ErrorCode.SPEC_UNSUPPORTED: "HTMLとテキスト以外の形式のため、読んでいません。",
+    ErrorCode.SPEC_TOO_LARGE: "ページが大きすぎるため、読んでいません。",
+    ErrorCode.SPEC_EMPTY: "読める本文がありませんでした。",
 }
 
 
