@@ -48,3 +48,36 @@ def escape_for_display(text: str, limit: int) -> str:
             out.append(ch)
     s = "".join(out)
     return s if len(s) <= limit else s[: max(limit - 1, 0)] + "…"
+
+
+# ---- 本文のバイナリ判定と NUL の除去（要項モードの公開ページ。第11弾 追加指示3） ----------------------------------
+# 実在の HTML（gzip で 272KB の告知ページ）の途中に NUL が1バイトだけ紛れていて、「1バイトでも NUL ならバイナリ」の判定で
+# 読めなかった。バイナリの判定を次の3つに絞り、それ以外の NUL は取り除いて本文として扱う。判定と除去の定義はここだけ
+# （S3 の SafeFetch が除去し、S2 の spec_read は同じ関数で判定だけを確かめる）。
+BINARY_PREFIX_BYTES = 1024  # 先頭のこのバイト数に NUL があればバイナリ（画像・圧縮・実行形式の多くは先頭に NUL を持つ）
+BINARY_NUL_MAX_RATIO = 0.01  # NUL の数が本文の 1% を超えたらバイナリ（ちょうど 1% は本文として扱う）
+# 先頭の数バイトで形式が分かるもの（NUL を先頭に持たない PDF なども、text/html と名乗っても本文として扱わない）
+BINARY_SIGNATURES: tuple[bytes, ...] = (
+    b"%PDF-",  # PDF
+    b"\x89PNG\r\n\x1a\n",  # PNG
+    b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08",  # ZIP（docx・xlsx を含む）
+    b"\x1f\x8b",  # gzip の生データ
+    b"GIF87a", b"GIF89a",  # GIF
+    b"\xff\xd8\xff",  # JPEG
+    b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",  # 旧形式の Office 文書
+    b"\x7fELF",  # 実行形式
+)  # fmt: skip
+
+
+def looks_binary(body: bytes) -> bool:
+    """本文がバイナリか（形式の署名で始まる・先頭 BINARY_PREFIX_BYTES に NUL・NUL の割合が BINARY_NUL_MAX_RATIO を超える）。"""
+    if body.startswith(BINARY_SIGNATURES):
+        return True
+    if b"\x00" in body[:BINARY_PREFIX_BYTES]:
+        return True
+    return bool(body) and body.count(b"\x00") > len(body) * BINARY_NUL_MAX_RATIO
+
+
+def strip_nul(body: bytes) -> bytes:
+    """バイナリでない本文に紛れた NUL を取り除く（looks_binary が False の本文にだけ使う）。"""
+    return body.replace(b"\x00", b"")

@@ -64,6 +64,7 @@ from app.ingest.sanitize import sanitize
 from app.jsonlog import log_event
 from app.model.port import ModelPort
 from app.spec_url import SpecRef, spec_log_id
+from app.textsafe import looks_binary
 
 SPEC_PRESET = Preset(
     preset_id=SPEC_URL_PRESET_ID,
@@ -95,16 +96,29 @@ def skip_reason(result: FetchResult | None) -> SpecSkipReason | None:
         return SpecSkipReason.TOO_LARGE
     if o is not FetchOutcome.OK or result.status != 200 or result.redirects:
         return SpecSkipReason.FETCH_FAILED  # 404・3xx（転送は追わない）・5xx・通信の失敗・期限切れ
-    if result.content_kind not in (ContentKind.HTML, ContentKind.PLAIN) or b"\x00" in result.body:
+    if result.content_kind not in (ContentKind.HTML, ContentKind.PLAIN) or looks_binary(result.body):
+        # バイナリの判定は textsafe.looks_binary（S3 と同じ定義）。NUL の除去は S3 の1か所で行う。S3 を通らずに紛れた NUL が残っても、
+        # 既存の洗浄（sanitize の strip_unsafe。visible_text は制御文字を持てない契約）が本文から落とす
         return SpecSkipReason.UNSUPPORTED
     if not result.body:
         return SpecSkipReason.EMPTY
     return None
 
 
+# 全ページが読めず、理由が1種類にそろった時に返す固定文（混ざる時は FETCH_FAILED）
+SKIP_ERROR: dict[SpecSkipReason, ErrorCode] = {
+    SpecSkipReason.REFUSED: ErrorCode.SPEC_UNAVAILABLE,  # 全部を S3 が拒否した＝いま使えない
+    SpecSkipReason.UNSUPPORTED: ErrorCode.SPEC_UNSUPPORTED,
+    SpecSkipReason.TOO_LARGE: ErrorCode.SPEC_TOO_LARGE,
+    SpecSkipReason.EMPTY: ErrorCode.SPEC_EMPTY,
+    SpecSkipReason.FETCH_FAILED: ErrorCode.FETCH_FAILED,
+}
+
+
 def _failure_code(skipped: list[SpecSkippedPage]) -> ErrorCode:
-    if skipped and all(s.reason is SpecSkipReason.REFUSED for s in skipped):
-        return ErrorCode.SPEC_UNAVAILABLE  # 全部を S3 が拒否した＝いま使えない
+    reasons = {s.reason for s in skipped}
+    if len(reasons) == 1:
+        return SKIP_ERROR[reasons.pop()]
     return ErrorCode.FETCH_FAILED
 
 

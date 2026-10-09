@@ -396,8 +396,8 @@ def test_port_exceptions_give_a_fixed_error_without_leaking(log_stream):
     [
         (lambda u: page(u, status=404, body=b""), "FETCH_FAILED"),
         (lambda u: page(u, status=302, body=b""), "FETCH_FAILED"),
-        (lambda u: page(u, body=b"%PDF-1.7", kind=ContentKind.UNSUPPORTED), "FETCH_FAILED"),
-        (lambda u: FetchResult(requested_url=u, outcome=FetchOutcome.UNSUPPORTED_TYPE), "FETCH_FAILED"),
+        (lambda u: page(u, body=b"%PDF-1.7", kind=ContentKind.UNSUPPORTED), "SPEC_UNSUPPORTED"),  # 理由が1種類なら、その固定文
+        (lambda u: FetchResult(requested_url=u, outcome=FetchOutcome.UNSUPPORTED_TYPE), "SPEC_UNSUPPORTED"),
         (lambda u: FetchResult(requested_url=u, outcome=FetchOutcome.NETWORK_ERROR), "FETCH_FAILED"),
         (lambda u: FetchResult(requested_url=u, outcome=FetchOutcome.BLOCKED, blocked_policy=PolicyId.SCOPE), "SPEC_UNAVAILABLE"),
     ],
