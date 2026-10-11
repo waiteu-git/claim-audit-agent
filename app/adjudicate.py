@@ -38,7 +38,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
-from app.checks.class_screen import quote_supports_class
+from app.checks.class_screen import quote_points_elsewhere, quote_supports_class
 from app.checks.probe_facts import TARGET_SUBMISSION
 from app.checks.repo_inspect import DOCKERFILE, REQUIREMENTS_FILE, LicenseFact, ReadmeFact, TechTraceFact
 from app.checks.unverifiable_reason import unverifiable_reason
@@ -47,6 +47,7 @@ from app.contracts import (
     REASON_LABEL_JA,
     REPO_FETCH_NAMES,
     AdjudicationInput,
+    CheckClass,
     Checker,
     Contradiction,
     ContradictionBasis,
@@ -356,13 +357,31 @@ def _pass_reason(o: Observation) -> str:
 # 検査できないクラスの要件の理由文（コードごとに1つの固定文。引用の中身・数値・URL は埋め込まない）
 _NONE_CLASS_TEXT: dict[UnverifiableReason, str] = {
     UnverifiableReason.HUMAN_ONLY: "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
-    UnverifiableReason.FUTURE: "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+    UnverifiableReason.FUTURE: "提出後に守る約束や、これから先の日付の条件です。今は確かめられません。ご自身で守ってください。",
     UnverifiableReason.NOT_PUBLIC: "非公開の情報が要るため、この道具は検査していません。ご自身で確認してください。",
     UnverifiableReason.OUT_OF_SCOPE: "この道具では検査していません。要項を読んで、ご自身で確認してください。",
 }
 
 
-GATE_REASON_TEXTS = frozenset(_NONE_CLASS_TEXT.values())  # report が、見出しと重なる固定文の前に理由ラベルを付けないために使う
+# 公開ページの本文を調べる検査が、記入先が提出フォームなどの要件に当たった時の固定文（理由コードは HUMAN_ONLY）
+_FORM_FIELD_TEXT = "記入や登録の先が提出フォームなどで、提出物のページを見ても確かめられない条件です。ご自身で確認してください。"
+
+# 引用が検査の内容と合わず、関門でも理由が決まらない時に、どの検査を当てようとしてやめたかを言うための名前
+_CHECK_CLASS_JA: dict[CheckClass, str] = {
+    CheckClass.LENGTH_LIMIT: "字数",
+    CheckClass.AUTH_WALL: "ログインの壁",
+    CheckClass.LEAK: "公開してはいけない情報",
+    CheckClass.RUNTIME_SIGNATURE: "実行環境の痕跡",
+    CheckClass.GUIDANCE_PRESENT: "案内があるか",
+    CheckClass.URL_PRESENT: "URLがあるか",
+}
+
+
+def _mismatch_text(cc: CheckClass) -> str:
+    return f"AIが選んだ検査（{_CHECK_CLASS_JA[cc]}）が、この文の内容と合わなかったため、検査の結果は使っていません。ご自身で確認してください。"
+
+
+GATE_REASON_TEXTS = frozenset(_NONE_CLASS_TEXT.values()) | {_FORM_FIELD_TEXT}  # report が、見出しと重なる固定文の前に理由ラベルを付けないために使う
 
 
 def _unverifiable_text(code: UnverifiableReason, o: Observation | None = None) -> str:
@@ -516,11 +535,17 @@ def _decide(
     checker = CHECK_CLASS_CHECKER[req.check_class]
     if checker is not None:
         if req.span is None or not quote_supports_class(req.check_class, req.span.original_span):
-            return _unverifiable(
-                req,
-                UnverifiableReason.OUT_OF_SCOPE,
-                "この要件の引用は、割り当てられた検査の内容と合わないため、検査の結果を適用しません。",
-            )
+            # 引用が検査の内容と合わない＝検査の結果は使わない。理由は、検査できないクラスと同じく引用の文面から決める
+            span = req.span
+            if span is not None and not span.quote_clipped and quote_points_elsewhere(req.check_class, span.original_span):
+                return _unverifiable(req, UnverifiableReason.HUMAN_ONLY, _FORM_FIELD_TEXT)
+            if span is None or span.quote_clipped:  # 切った引用は文の前半だけ。前半の語で理由を決めない
+                code = UnverifiableReason.OUT_OF_SCOPE
+            else:
+                code = unverifiable_reason(span.original_span, req.kind)
+            if code is UnverifiableReason.OUT_OF_SCOPE:
+                return _unverifiable(req, code, _mismatch_text(req.check_class))
+            return _unverifiable(req, code, _NONE_CLASS_TEXT[code])
         if checker is Checker.CONTAINS_TERMS and req.kind is Kind.PROHIBITED:
             return _unverifiable(
                 req,

@@ -656,7 +656,7 @@ def test_the_hand_classified_table_agreement_is_not_a_regression():
 # --- 判定表への組み込み ------------------------------------------------------------------------------------------------
 GATE_TEXT = {
     HUMAN: "提出物のURLからは確かめられない条件です。ご自身で確認してください。",
-    FUTURE: "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+    FUTURE: "提出後に守る約束や、これから先の日付の条件です。今は確かめられません。ご自身で守ってください。",
     NOT_PUBLIC: "非公開の情報が要るため、この道具は検査していません。ご自身で確認してください。",
     OUT: "この道具では検査していません。要項を読んで、ご自身で確認してください。",
 }
@@ -679,7 +679,7 @@ def test_a_none_class_requirement_gets_the_code_and_one_fixed_sentence_per_code(
 
 
 def test_the_set_of_gate_texts_is_exported_for_the_report():
-    assert GATE_REASON_TEXTS == frozenset(GATE_TEXT.values())
+    assert frozenset(GATE_TEXT.values()) | {FORM_TEXT} <= GATE_REASON_TEXTS
 
 
 def test_the_fixed_sentences_embed_nothing_from_the_quote():
@@ -689,14 +689,43 @@ def test_the_fixed_sentences_embed_nothing_from_the_quote():
         assert not any(tok in v.reason for tok in ("20", "http", "11月", "5名"))
 
 
-def test_other_out_of_scope_paths_are_unchanged():
-    # class_screen（引用が検査の内容と合わない）は、関門を通らず従来の文と OUT_OF_SCOPE のまま
+FORM_TEXT = "記入や登録の先が提出フォームなどで、提出物のページを見ても確かめられない条件です。ご自身で確認してください。"
+
+
+def test_a_page_text_check_on_a_form_field_requirement_is_a_human_check():
+    # 記入先が提出フォームの欄（公開ページの本文には無い）＝ページの語の検査は当てず、人が確かめる条件と言う
+    for quote in (
+        "※デモ動画は自作の上、YouTube に公開し、URLをプロジェクトにご登録ください。",
+        "認証が必要なプロダクトは、テストアカウントを作成のうえ「動作確認の方法」項目に認証情報をご記入ください。",
+    ):
+        for cc in (C.CheckClass.URL_PRESENT, C.CheckClass.GUIDANCE_PRESENT):
+            v = _verdict(quote, K.REQUIRED, cc)
+            assert v.label is L.UNVERIFIABLE and v.reason_code is HUMAN and v.reason == FORM_TEXT
+            assert not v.evidence
+
+
+def test_a_mismatched_check_falls_back_to_the_gate_for_the_reason():
+    # 引用が検査の内容と合わない時は、検査の結果を使わず、検査できないクラスと同じ関門で理由を決める
+    v = _verdict("参加を希望する方は、締切までに申し込んでください。", K.REQUIRED, C.CheckClass.LENGTH_LIMIT)
+    assert v.label is L.UNVERIFIABLE and v.reason_code is HUMAN and v.reason == GATE_TEXT[HUMAN]
+
+
+def test_a_mismatched_check_that_the_gate_cannot_place_names_the_check():
     v = _verdict("交流会への参加は任意です。", K.REQUIRED, C.CheckClass.LENGTH_LIMIT)
     assert v.reason_code is OUT
-    assert v.reason == "この要件の引用は、割り当てられた検査の内容と合わないため、検査の結果を適用しません。"
+    assert v.reason == "AIが選んだ検査（字数）が、この文の内容と合わなかったため、検査の結果は使っていません。ご自身で確認してください。"
     # 語が在ることを確かめる検査は禁止の要件に当てはまらない（向きが逆）
     v = _verdict("テストアカウントの案内を記載してはならない。", K.PROHIBITED, C.CheckClass.GUIDANCE_PRESENT)
     assert v.reason_code is OUT and "禁止の要件には当てはまりません" in v.reason
+
+
+def test_a_mismatched_check_with_a_clipped_quote_is_never_given_a_specific_reason():
+    quote = "参加を希望する方は、締切までに申し込んでください、ただし、すでに登録済みの方を除きます。"
+    doc = make_doc("D1", quote + BLOCK_SEP + "別の文です。")
+    req = make_verified("R1", doc=doc, needle=quote, kind=K.REQUIRED, check_class=C.CheckClass.LENGTH_LIMIT)
+    req = req.model_copy(update={"span": req.span.model_copy(update={"original_span": quote[:30], "quote_clipped": True})})
+    (v,) = adjudicate(C.AdjudicationInput(requirements=(req,), docs=(doc.meta(),)))
+    assert v.reason_code is OUT and v.reason.startswith("AIが選んだ検査（字数）")
 
 
 def test_a_speculative_requirement_is_still_a_reference_not_a_gated_one():
@@ -801,9 +830,10 @@ def test_rejudge_refuses_a_record_whose_labels_would_change():
         rejudge(broken)
 
 
-@pytest.mark.parametrize(("req_id", "forged"), [("R15", U.NEEDS_AUTH), ("R16", U.HUMAN_ONLY)])
+@pytest.mark.parametrize(("req_id", "forged"), [("R15", U.NEEDS_AUTH), ("R16", U.NEEDS_JS)])
 def test_rejudge_refuses_a_change_of_reason_outside_the_gate(req_id, forged):
-    # 検査の種類がある要件（R15: 観測が無く根拠なし／R16: 引用が検査と合わず範囲外）の確認不能の理由は、関門が決めるものではない。
+    # 検査の種類がある要件（R15: 観測が無く根拠なし）の確認不能の理由は、関門が決めるものではない。引用が検査と合わない要件（R16）は
+    # 関門が決めるが、動いてよいのは関門の4コードの間だけ（関門の外のコードへは書き換えない）。
     # 印などの入力が足りない記録を、黙って別の理由に書き換えない（ラベルが同じでも、理由コードが変わるなら拒否する）
     rec = load_bundle(REPLAY_DIR / "lp_self.json").record
     verdicts = tuple(v.model_copy(update={"reason_code": forged}) if v.req_id == req_id else v for v in rec.verdicts)

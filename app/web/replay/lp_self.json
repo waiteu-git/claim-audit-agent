@@ -3278,7 +3278,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R13",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3371,7 +3371,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R16",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3433,7 +3433,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R18",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -3898,7 +3898,7 @@
    "policy_id": null,
    "purpose": null,
    "quote_steps": [],
-   "reason_code": "OUT_OF_SCOPE",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R33",
    "result_digest": null,
    "run_id": "SSrmfwtya_Os2QFefY2HoA",
@@ -5257,8 +5257,8 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "この要件の引用は、割り当てられた検査の内容と合わないため、検査の結果を適用しません。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "記入や登録の先が提出フォームなどで、提出物のページを見ても確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R13"
   },
   {
@@ -5277,15 +5277,15 @@
     }
    ],
    "label": "確認不能",
-   "reason": "判断できる根拠が見つかりません。",
+   "reason": "検査の結果から、合っているかどうかを決められませんでした。",
    "reason_code": "NO_EVIDENCE",
    "req_id": "R15"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "この要件の引用は、割り当てられた検査の内容と合わないため、検査の結果を適用しません。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "記入や登録の先が提出フォームなどで、提出物のページを見ても確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R16"
   },
   {
@@ -5298,21 +5298,21 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "この要件の引用は、割り当てられた検査の内容と合わないため、検査の結果を適用しません。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "記入や登録の先が提出フォームなどで、提出物のページを見ても確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R18"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+   "reason": "提出後に守る約束や、これから先の日付の条件です。今は確かめられません。ご自身で守ってください。",
    "reason_code": "FUTURE",
    "req_id": "R19"
   },
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+   "reason": "提出後に守る約束や、これから先の日付の条件です。今は確かめられません。ご自身で守ってください。",
    "reason_code": "FUTURE",
    "req_id": "R20"
   },
@@ -5415,8 +5415,8 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "この要件の引用は、割り当てられた検査の内容と合わないため、検査の結果を適用しません。",
-   "reason_code": "OUT_OF_SCOPE",
+   "reason": "記入や登録の先が提出フォームなどで、提出物のページを見ても確かめられない条件です。ご自身で確認してください。",
+   "reason_code": "HUMAN_ONLY",
    "req_id": "R33"
   },
   {
@@ -5462,7 +5462,7 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+   "reason": "提出後に守る約束や、これから先の日付の条件です。今は確かめられません。ご自身で守ってください。",
    "reason_code": "FUTURE",
    "req_id": "R38"
   },
@@ -5476,7 +5476,7 @@
   {
    "evidence": [],
    "label": "確認不能",
-   "reason": "提出後の約束や将来の事項で、今は検査できません。ご自身で守ってください。",
+   "reason": "提出後に守る約束や、これから先の日付の条件です。今は確かめられません。ご自身で守ってください。",
    "reason_code": "FUTURE",
    "req_id": "R40"
   }

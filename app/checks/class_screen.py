@@ -97,6 +97,16 @@ def quote_supports_class(check_class: CheckClass, quote: str) -> bool:
     return pattern.search(text) is not None
 
 
+def quote_points_elsewhere(check_class: CheckClass, quote: str) -> bool:
+    """公開ページの本文を調べる検査なのに、引用の記入・登録の先が提出フォームなどの欄（_ELSEWHERE）か。
+
+    quote_supports_class が False を返す理由の1つ。判定表が「人が確かめる条件」と言い分けるために使う。
+    """
+    if check_class not in _PAGE_TEXT_CLASSES:
+        return False
+    return _ELSEWHERE.search(unicodedata.normalize("NFKC", quote)) is not None
+
+
 def is_checkable_requirement(req: VerifiedRequirement) -> bool:
     """検査の種類があり、検証済みの引用がその話題に触れている要件か。推測・引用なし・検査できないクラスは False。
 

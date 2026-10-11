@@ -26,6 +26,7 @@ from pathlib import Path
 from app.adjudicate import adjudicate
 from app.agent.planner import InspectMode
 from app.agent.run import run_audit
+from app.checks.class_screen import quote_supports_class
 from app.checks.leak_scan import scan_text
 from app.config import PRESET_IDS, PRESET_SAMPLE_DEFECT, PRESET_SAMPLE_INJECTION, PRESETS, Settings
 from app.contracts import (
@@ -293,7 +294,10 @@ _GATE_CODES = frozenset(
 
 
 def _decided_by_gate(req) -> bool:  # noqa: ANN001
-    return req.span is not None and req.kind is not Kind.SPECULATIVE and CHECK_CLASS_CHECKER[req.check_class] is None
+    # 検査できないクラスか、引用が検査の内容と合わない（検査の結果を使わず、関門が理由を決める）要件
+    if req.span is None or req.kind is Kind.SPECULATIVE:
+        return False
+    return CHECK_CLASS_CHECKER[req.check_class] is None or not quote_supports_class(req.check_class, req.span.original_span)
 
 
 def rejudge(record: RunRecord) -> RunRecord:

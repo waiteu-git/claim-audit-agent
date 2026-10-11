@@ -257,7 +257,7 @@ class UnverifiableReason(StrEnum):
 
 # 画面に出す理由コードの日本語（T11 が使う）
 REASON_LABEL_JA: dict[UnverifiableReason, str] = {
-    UnverifiableReason.NO_EVIDENCE: "判断できる根拠が見つかりません",
+    UnverifiableReason.NO_EVIDENCE: "検査の結果から、合っているかどうかを決められませんでした",
     UnverifiableReason.BUDGET: "実行の上限に達したため検査していません",
     UnverifiableReason.TRUNCATED: "文書が長く、読み切れていません",
     UnverifiableReason.OUT_OF_SCOPE: "検査できる範囲の外です",
@@ -265,7 +265,7 @@ REASON_LABEL_JA: dict[UnverifiableReason, str] = {
     UnverifiableReason.NEEDS_AUTH: "ログインが必要で、検査できません",
     UnverifiableReason.NOT_PUBLIC: "非公開の情報のため、検査できません",
     UnverifiableReason.UNSUPPORTED_TYPE: "対応していない形式です",
-    UnverifiableReason.FUTURE: "将来の時点の事項で、今は検査できません",
+    UnverifiableReason.FUTURE: "これから先の日付や提出後の約束で、今は確かめられません",
     UnverifiableReason.HUMAN_ONLY: "人の判断が必要です",
     UnverifiableReason.TRANSIENT: "一時的に取得できませんでした",
     UnverifiableReason.FETCH_BLOCKED: "取得が許可されていません",

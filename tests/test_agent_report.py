@@ -67,7 +67,7 @@ def test_unverifiable_reason_is_shown_in_japanese_and_status_notes_are_shown():
     rec = make_record(status=RunStatus.DEGRADED, degraded_reason="BUDGET")
     html = report_html(rec)
     assert "部分結果" in html and "（BUDGET）" in html
-    assert "判断できる根拠が見つかりません" not in html
+    assert "合っているかどうかを決められませんでした" not in html
     rec2 = make_record(status=RunStatus.ABORTED, aborted_reason="KILL", verdicts=())
     assert "中止" in report_html(rec2)
 
