@@ -382,3 +382,21 @@ def test_the_live_progress_line_is_replaced_when_the_result_arrives():
     block = JS.split("function renderResult")[1].split("function renderHero")[0]
     assert 'state.live) $("run-mode").textContent = "ライブ実行の結果です。"' in block
     assert "保存済みの実行を再生しています" not in JS  # 終わった後に「再生しています」と言わない
+
+
+def test_the_spec_sentence_can_be_opened_on_the_original_page_with_a_text_fragment():
+    # 確かめていない行（ご自身で確認・確認不能）は、要項の元のページの、その一文の場所を別のタブで開ける。
+    # URL は例の既知のリンク（presets[].links）だけから作り、記録の文字列から URL を作らない
+    block = JS.split("function specPageHref")[1].split("function showSource")[0]
+    assert "state.presets[state.view.rec.preset_id]" in block and '#:~:text=' in block
+    assert '"official", "spec", "faq"' in block and 'd.role !== "spec"' in block
+    assert 'rel: "noopener noreferrer"' in block and 'target: "_blank"' in block
+    assert 'replace(/-/g, "%2D")' in block  # テキストフラグメントの区切り文字を本文の中で使わせない
+
+
+def test_the_human_rows_can_be_ticked_without_storing_anything():
+    row = JS.split("function rowNode")[1].split("function factsNode")[0]
+    assert 'x.tone === "human"' in row and 'type: "checkbox"' in row and "e.stopPropagation()" in row
+    assert 'checked[x.r.req_id] ? "☑ " : "□ "' in JS  # コピーするチェックリストにも印が載る
+    for bad in ("localStorage", "sessionStorage", "document.cookie"):
+        assert bad not in JS

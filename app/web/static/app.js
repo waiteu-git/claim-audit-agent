@@ -753,6 +753,7 @@
       g.appendChild(el("summary", { cls: "grouphead" }, [
         el("span", { cls: "gcount", text: fmt(rows.length) }),
         el("span", { cls: "gtitle", text: GROUP[tone][0] }),
+        tone === "human" ? el("span", { cls: "gdone", attrs: { id: "human-done", "aria-live": "polite" } }) : null,
       ]));
       const body = el("div", { cls: "groupbody" });
       if (tone !== "fail") body.appendChild(el("p", { cls: "group-sub", text: GROUP[tone][1] }));
@@ -767,6 +768,16 @@
       g.appendChild(body);
       box.appendChild(g);
     }
+    updateHumanCount();
+  }
+
+  function updateHumanCount() {
+    const n = document.getElementById("human-done");
+    const v = state.view;
+    if (!n || !v) return;
+    const rows = v.rows.filter((x) => x.tone === "human");
+    const done = rows.filter((x) => v.checked && v.checked[x.r.req_id]).length;
+    n.textContent = done > 0 ? "確認済み " + fmt(done) + " / " + fmt(rows.length) : "";
   }
 
   function verdictNode(v) {
@@ -789,13 +800,24 @@
   function rowNode(x) {
     const r = x.r;
     const head = headingOf(x);
+    let tick = null;
+    if (x.tone === "human" && state.view) {
+      const checked = state.view.checked || (state.view.checked = {});
+      tick = el("input", { cls: "tick", attrs: { type: "checkbox", "aria-label": r.req_id + " を確認済みにする", title: "確認済みにする" } });
+      tick.checked = !!checked[r.req_id];
+      tick.addEventListener("click", (e) => e.stopPropagation()); // 行の開閉はしない
+      tick.addEventListener("change", () => { checked[r.req_id] = tick.checked; updateHumanCount(); });
+    }
     const summary = el("summary", { cls: "rhead" }, [
+      tick,
       verdictNode({ cls: x.badge[0], mark: x.badge[1], label: x.name }),
       el("span", { cls: "rtitle", text: head }),
       el("span", { cls: "rid", text: r.req_id }),
     ]);
     const body = el("div", { cls: "rbody" });
     body.appendChild(el("p", { cls: "quote" + (r.span ? "" : " quote-none"), text: r.span ? "「" + clip(r.span.original_span, 80) + "」" : "（要項に引用できない推測）" + (r.gist ? " " + r.gist : "") }));
+    const link = x.tone === "human" || x.tone === "tool" ? sourceLink(r, x.doc) : null;
+    if (link) body.appendChild(el("p", { cls: "srclink-row" }, [link]));
     if (x.reason && x.reason !== head) body.appendChild(el("p", { cls: "reason", text: x.reason }));
     const evidence = x.v && x.name !== "参考" ? x.v.evidence || [] : [];
     if (evidence.length) {
@@ -833,7 +855,8 @@
 
   function copyChecklist(rows, btn) {
     const lines = ["提出前に、ご自身で確認する項目（" + rows.length + "件）", ""];
-    for (const x of rows) lines.push("□ " + (x.r.span ? clip(x.r.span.original_span, 80) : "（要項に引用できない推測）") + "（" + x.r.req_id + "）" + (x.reason ? " → " + x.reason : ""));
+    const checked = (state.view && state.view.checked) || {};
+    for (const x of rows) lines.push((checked[x.r.req_id] ? "☑ " : "□ ") + (x.r.span ? clip(x.r.span.original_span, 80) : "（要項に引用できない推測）") + "（" + x.r.req_id + "）" + (x.reason ? " → " + x.reason : ""));
     const text = lines.join("\n");
     const done = (ok) => {
       const old = btn.textContent;
@@ -842,6 +865,32 @@
       setTimeout(() => { btn.textContent = old; }, 2000);
     };
     try { navigator.clipboard.writeText(text).then(() => done(true), () => done(false)); } catch (e) { done(false); }
+  }
+
+  // 要項の文書（role=spec）を、例の要項のリンク（公式の募集ページ・架空の要項・よくある質問）に順に対応させる。
+  // 対応が無い（要項モードの入力・提出物）時は null。URL は既知のリンクだけを使い、記録の文字列から URL を作らない
+  function specPageHref(r, d) {
+    if (!r.span || !d || d.role !== "spec" || !state.view) return null;
+    const p = state.presets[state.view.rec.preset_id] || {};
+    const pages = (Array.isArray(p.links) ? p.links : []).filter((l) => ["official", "spec", "faq"].indexOf(l.role) >= 0);
+    const specDocs = (state.view.rec.docs || []).filter((x) => x.role === "spec").map((x) => x.doc_id);
+    const page = pages[specDocs.indexOf(d.doc_id)];
+    if (!page || typeof page.href !== "string") return null;
+    return page.href + "#:~:text=" + textFragment(r.span);
+  }
+
+  // テキストフラグメント（ブラウザが、ページの中のその一文までスクロールして色を付ける）。切り詰めた引用は前半だけで探す
+  function textFragment(span) {
+    const enc = (t) => encodeURIComponent(t).replace(/-/g, "%2D").replace(/,/g, "%2C").replace(/&/g, "%26");
+    const t = String(span.original_span || "").replace(/…$/, "").trim();
+    if (span.quote_clipped || t.length <= 60) return enc(span.quote_clipped ? t.slice(0, 30) : t);
+    return enc(t.slice(0, 24)) + "," + enc(t.slice(-24));
+  }
+
+  function sourceLink(r, d) {
+    const href = specPageHref(r, d);
+    if (!href) return null;
+    return el("a", { cls: "srclink", text: "要項の元のページで、この一文の前後を読む（別のタブ）", attrs: { href, target: "_blank", rel: "noopener noreferrer" } });
   }
 
   function showSource(r, d) {
@@ -858,6 +907,11 @@
     for (const [k, v] of rows) { dl.appendChild(el("dt", { text: k })); dl.appendChild(el("dd", { text: v })); }
     dl.appendChild(el("dt", { text: "要項の1文" }));
     dl.appendChild(el("dd", null, [el("mark", { text: r.span.original_span })]));
+    const link = sourceLink(r, d);
+    if (link) {
+      dl.appendChild(el("dt", { text: "前後の文" }));
+      dl.appendChild(el("dd", null, [link]));
+    }
     if (r.span.quote_clipped) {
       dl.appendChild(el("dt", { text: "引用の長さ" }));
       dl.appendChild(el("dd", { text: "同梱の記録のため80字までに切り詰めています（位置は元の文のものです）" }));
