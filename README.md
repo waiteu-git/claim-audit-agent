@@ -131,3 +131,8 @@ python -m app.fixtures.baseline --live      # 同じ。実モデルで
 - 検査していないもの: 参加資格・登録の手続き・フォームの記入欄・提出後の約束のように、公開 URL からは確かめられない条件は、確認不能（理由つき）として並べるだけで、確かめたとは言いません。
 
 デプロイの手順は `deploy.sh`（既定は表示だけ。`--apply` で初めて実行）にあります。URL や設定値はこのリポジトリには書きません。
+
+## ライセンス
+
+このリポジトリのコードは [Apache License 2.0](LICENSE) で公開しています（Copyright 2026 waiteu）。
+依存している OSS のライセンスは、それぞれのパッケージのライセンスに従います（一覧は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）。
